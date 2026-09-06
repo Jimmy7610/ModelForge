@@ -33,6 +33,6 @@ describe('Navigation and Constants Configuration', () => {
   });
 
   it('exposes correct app version', () => {
-    expect(APP_VERSION).toBe('0.3.2');
+    expect(APP_VERSION).toBe('0.4.0');
   });
 });

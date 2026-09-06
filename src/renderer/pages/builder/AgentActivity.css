@@ -151,11 +151,18 @@
 
 .timeline-content {
   display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  padding-bottom: 6px;
+  font-size: 12px;
+}
+
+.timeline-label-row {
+  display: flex;
   align-items: center;
   justify-content: space-between;
-  flex: 1;
-  padding-bottom: 4px;
-  font-size: 12px;
+  width: 100%;
 }
 
 .timeline-label {
@@ -170,6 +177,13 @@
   font-size: 10px;
   color: var(--text-muted);
 }
+
+.timeline-detail {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
 
 /* Test pass card */
 .test-metric-card {

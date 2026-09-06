@@ -37,7 +37,7 @@ describe('Preload & Bridge Architecture Contract', () => {
     };
 
     expect(bridgeInfo.available).toBe(true);
-    expect(bridgeInfo.version).toBe('0.3.2');
+    expect(bridgeInfo.version).toBe('0.4.0');
     expect(bridgeInfo.preloadFormat).toBe('cjs');
   });
 

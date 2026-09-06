@@ -9,8 +9,12 @@ import {
   ModelRecord,
   ModelScanProgress,
   Project,
+  AgentActivityItem,
+  AgentPlanState,
+  RunPlanPayload,
 } from '../shared/types';
 import { APP_VERSION, IPC_CHANNELS } from '../shared/constants';
+
 
 const api: ModelForgeAPI = {
   getBridgeInfo: (): BridgeInfo => {
@@ -45,6 +49,11 @@ const api: ModelForgeAPI = {
   removeProject: (id: string): Promise<boolean> => {
     return ipcRenderer.invoke(IPC_CHANNELS.REMOVE_PROJECT, id);
   },
+
+  setActiveProject: (id: string | null): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SET_ACTIVE_PROJECT, id);
+  },
+
 
   // Model Library Management
   getModelLibraries: (): Promise<ModelLibrary[]> => {
@@ -126,6 +135,66 @@ const api: ModelForgeAPI = {
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.INFERENCE_STATE_CHANGED, handler);
     };
+  },
+
+  // Plan Agent & Workspace Intelligence (Pass 4)
+  runPlanAgent: (payload: RunPlanPayload): Promise<{ success: boolean; sessionId: string }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.RUN_PLAN_AGENT, payload);
+  },
+
+  stopPlanAgent: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.STOP_PLAN_AGENT);
+  },
+
+  getAgentState: (): Promise<AgentPlanState> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_AGENT_STATE);
+  },
+
+  onAgentActivity: (callback: (activity: AgentActivityItem) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, activity: AgentActivityItem) => {
+      callback(activity);
+    };
+    ipcRenderer.on(IPC_CHANNELS.AGENT_ACTIVITY, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_ACTIVITY, handler);
+    };
+  },
+
+  onAgentChunk: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, chunk: any) => {
+      callback(chunk);
+    };
+    ipcRenderer.on(IPC_CHANNELS.AGENT_CHUNK, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_CHUNK, handler);
+    };
+  },
+
+  onAgentStateChange: (callback: (state: AgentPlanState) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: AgentPlanState) => {
+      callback(state);
+    };
+    ipcRenderer.on(IPC_CHANNELS.AGENT_STATE_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_STATE_CHANGED, handler);
+    };
+  },
+
+  // Read-Only Workspace Inspection Tools
+  getProjectOverview: (projectId?: string): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_PROJECT_OVERVIEW, projectId);
+  },
+
+  listDirectory: (options?: { path?: string; recursive?: boolean; maxDepth?: number }): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.LIST_DIRECTORY, options);
+  },
+
+  readFile: (options: { path: string; startLine?: number; endLine?: number }): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.READ_FILE, options);
+  },
+
+  searchText: (options: { query: string; path?: string; caseSensitive?: boolean; maxMatches?: number }): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SEARCH_TEXT, options);
   },
 
   // Window Controls

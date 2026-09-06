@@ -1,6 +1,6 @@
 import { AppSettings } from './types';
 
-export const APP_VERSION = '0.3.2';
+export const APP_VERSION = '0.4.0';
 export const SCHEMA_VERSION = 2;
 
 export const MAX_PROMPT_CHARS = 16000;
@@ -44,8 +44,24 @@ export const IPC_CHANNELS = {
   INFERENCE_CHUNK: 'modelforge:inference-chunk',
   INFERENCE_STATE_CHANGED: 'modelforge:inference-state-changed',
 
+  // Plan Agent & Workspace Intelligence (Pass 4)
+  RUN_PLAN_AGENT: 'modelforge:run-plan-agent',
+  STOP_PLAN_AGENT: 'modelforge:stop-plan-agent',
+  GET_AGENT_STATE: 'modelforge:get-agent-state',
+  SET_ACTIVE_PROJECT: 'modelforge:set-active-project',
+  AGENT_ACTIVITY: 'modelforge:agent-activity',
+  AGENT_CHUNK: 'modelforge:agent-chunk',
+  AGENT_STATE_CHANGED: 'modelforge:agent-state-changed',
+
+  // Read-Only Workspace Inspection Tools
+  GET_PROJECT_OVERVIEW: 'modelforge:get-project-overview',
+  LIST_DIRECTORY: 'modelforge:list-directory',
+  READ_FILE: 'modelforge:read-file',
+  SEARCH_TEXT: 'modelforge:search-text',
+
   // Window Controls
   WINDOW_CONTROL: 'modelforge:window-control',
   IS_MAXIMIZED: 'modelforge:is-maximized',
   WINDOW_STATE_CHANGED: 'modelforge:window-state-changed',
 } as const;
+

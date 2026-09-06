@@ -4,7 +4,15 @@ import { useAppStore } from '@/store/AppStoreContext';
 import './PromptComposer.css';
 
 export const PromptComposer: React.FC = () => {
-  const { activeProject, activeModel, addToast, setActiveTab } = useAppStore();
+  const {
+    activeProject,
+    activeModel,
+    addToast,
+    isPlanning,
+    runPlanAgent,
+    stopPlanAgent,
+  } = useAppStore();
+
   const [prompt, setPrompt] = useState('');
   const [activeMessage, setActiveMessage] = useState<string | null>(null);
 
@@ -17,22 +25,42 @@ export const PromptComposer: React.FC = () => {
       addToast(msg, 'warning');
       return;
     }
-    const msg = 'Autonomous agent execution loop is scheduled for Pass 4. Use the Chat tab below for direct real-time model interaction.';
-    setActiveMessage(msg);
-    addToast(msg, 'info');
-    setActiveTab('chat');
-  };
-
-  const handlePlan = () => {
     if (!activeProject) {
-      const msg = 'Select a project first to generate an architecture plan.';
+      const msg = 'Select an active project first.';
       setActiveMessage(msg);
       addToast(msg, 'warning');
       return;
     }
-    const msg = 'Planning engine requires a loaded local model.';
-    setActiveMessage(msg);
-    addToast(msg, 'info');
+    handlePlan();
+  };
+
+  const handlePlan = () => {
+    if (!activeProject) {
+      const msg = 'Select an active project first to generate an architecture plan.';
+      setActiveMessage(msg);
+      addToast(msg, 'warning');
+      return;
+    }
+    if (!activeModel) {
+      const msg = 'Planning engine requires a loaded local model. Open Models to load a GGUF model.';
+      setActiveMessage(msg);
+      addToast(msg, 'warning');
+      return;
+    }
+    if (!prompt.trim()) {
+      const msg = 'Enter a prompt describing what to analyze or plan (e.g. "Analyze this project and explain its architecture").';
+      setActiveMessage(msg);
+      addToast(msg, 'warning');
+      return;
+    }
+
+    if (isPlanning) {
+      stopPlanAgent();
+      return;
+    }
+
+    setActiveMessage(null);
+    runPlanAgent(prompt.trim());
   };
 
   const handleCheckpoint = () => {
@@ -46,6 +74,7 @@ export const PromptComposer: React.FC = () => {
     setActiveMessage(msg);
     addToast(msg, 'info');
   };
+
 
   return (
     <div className="panel prompt-composer-panel">
@@ -101,13 +130,14 @@ export const PromptComposer: React.FC = () => {
           </button>
 
           <button
-            className="btn btn-secondary"
+            className={`btn ${isPlanning ? 'btn-danger' : 'btn-secondary'}`}
             onClick={handlePlan}
-            title="Generate step-by-step implementation plan"
+            title={isPlanning ? 'Stop current planning run' : 'Generate step-by-step implementation plan'}
           >
             <ListOrdered size={13} />
-            <span>Plan</span>
+            <span>{isPlanning ? 'Stop Plan' : 'Plan'}</span>
           </button>
+
 
           <button
             className="btn btn-secondary"

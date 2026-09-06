@@ -416,4 +416,68 @@ export class InferenceService {
 
     return true;
   }
+
+  /**
+
+   * Executes an agent prompt session with tool functions and streaming callbacks.
+   */
+  public async executeAgentPrompt(options: {
+    prompt: string;
+    functions?: Record<string, unknown>;
+    temperature?: number;
+    maxTokens?: number;
+    signal?: AbortSignal;
+    onChunk?: (text: string) => void;
+  }): Promise<string> {
+    if (this.modelState !== 'loaded' || !this.chatSession) {
+      throw new Error('No model loaded. Please load a local GGUF model first.');
+    }
+
+    if (this.generationState === 'generating') {
+      throw new Error('Generation already in progress.');
+    }
+
+    this.generationState = 'generating';
+    await this.notifyStateChange();
+
+    let fullResponse = '';
+
+    try {
+      // Cast to any to accommodate node-llama-cpp functions & signal typing
+      const promptOptions: Record<string, unknown> = {
+        signal: options.signal,
+        stopOnAbortSignal: true,
+        temperature: options.temperature ?? 0.4,
+        maxTokens: options.maxTokens ?? 2048,
+        onResponseChunk: (chunk: { text?: string }) => {
+          if (chunk.text) {
+            fullResponse += chunk.text;
+            if (options.onChunk) {
+              options.onChunk(chunk.text);
+            }
+          }
+        },
+        onTextChunk: (chunkText: string) => {
+          if (chunkText && !fullResponse.endsWith(chunkText)) {
+            fullResponse += chunkText;
+            if (options.onChunk) {
+              options.onChunk(chunkText);
+            }
+          }
+        },
+      };
+
+      if (options.functions) {
+        promptOptions.functions = options.functions;
+      }
+
+      await (this.chatSession as any).prompt(options.prompt, promptOptions);
+
+      return fullResponse;
+    } finally {
+      this.generationState = 'idle';
+      await this.notifyStateChange();
+    }
+  }
 }
+

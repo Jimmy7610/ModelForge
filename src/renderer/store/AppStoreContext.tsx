@@ -19,7 +19,10 @@ import {
   NavigationPage,
   Project,
   WorkspaceTab,
+  AgentActivityItem,
+  AgentPlanState,
 } from '@shared/types';
+
 import { DEFAULT_SETTINGS } from '@shared/constants';
 
 export interface ToastItem {
@@ -67,6 +70,14 @@ interface AppStoreContextType {
   stopGeneration: () => Promise<boolean>;
   clearChat: () => Promise<boolean>;
 
+  // Plan Agent & Workspace Intelligence (Pass 4)
+  agentActivities: AgentActivityItem[];
+  agentPlanState: AgentPlanState | null;
+  isPlanning: boolean;
+  runPlanAgent: (prompt: string) => Promise<void>;
+  stopPlanAgent: () => Promise<boolean>;
+  clearAgentActivities: () => void;
+
   hardwareInfo: HardwareInfo | null;
   toasts: ToastItem[];
   addToast: (message: string, type?: ToastItem['type']) => void;
@@ -75,6 +86,7 @@ interface AppStoreContextType {
   setCommandPaletteOpen: (open: boolean) => void;
   isMaximized: boolean;
 }
+
 
 const AppStoreContext = createContext<AppStoreContextType | null>(null);
 
@@ -100,6 +112,12 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   // Local Inference & Streaming Chat (Pass 3)
   const [inferenceState, setInferenceState] = useState<InferenceState | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+
+  // Plan Agent & Workspace Intelligence (Pass 4)
+  const [agentActivities, setAgentActivities] = useState<AgentActivityItem[]>([]);
+  const [agentPlanState, setAgentPlanState] = useState<AgentPlanState | null>(null);
+  const [isPlanning, setIsPlanning] = useState(false);
+
 
   const addToast = useCallback((message: string, type: ToastItem['type'] = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -229,12 +247,38 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         });
       }
 
+      let unsubscribeAgentActivity: (() => void) | undefined;
+      if (window.modelForge.onAgentActivity) {
+        unsubscribeAgentActivity = window.modelForge.onAgentActivity((activity) => {
+          setAgentActivities((prev) => {
+            const idx = prev.findIndex((a) => a.id === activity.id);
+            if (idx >= 0) {
+              const updated = [...prev];
+              updated[idx] = activity;
+              return updated;
+            }
+            return [...prev, activity];
+          });
+        });
+      }
+
+      let unsubscribeAgentState: (() => void) | undefined;
+      if (window.modelForge.onAgentStateChange) {
+        unsubscribeAgentState = window.modelForge.onAgentStateChange((state) => {
+          setAgentPlanState(state);
+          setIsPlanning(state.status === 'running');
+        });
+      }
+
       return () => {
         unsubscribeState();
         unsubscribeInferenceState();
         unsubscribeInferenceChunk();
         if (unsubscribeScan) unsubscribeScan();
+        if (unsubscribeAgentActivity) unsubscribeAgentActivity();
+        if (unsubscribeAgentState) unsubscribeAgentState();
       };
+
     }
   }, [refreshModelsAndLibraries]);
 
@@ -483,6 +527,95 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
     return true;
   }, [addToast]);
 
+  const activeProject = projects.find((p) => p.id === activeProjectId) || null;
+  const selectedModel = models.find((m) => m.id === selectedModelId) || null;
+  const activeModel = inferenceState?.activeModel || null;
+  const isGenerating = inferenceState?.generationState === 'generating';
+
+  const handleSetActiveProjectId = useCallback((id: string | null) => {
+    setActiveProjectId(id);
+    if (typeof window !== 'undefined' && window.modelForge?.setActiveProject) {
+      window.modelForge.setActiveProject(id).catch(console.error);
+    }
+  }, []);
+
+
+  const handleRunPlanAgent = useCallback(
+    async (prompt: string) => {
+      const activeProj = projects.find((p) => p.id === activeProjectId);
+      if (!activeProj) {
+        addToast('Select or add a project first to run Plan Agent.', 'warning');
+        return;
+      }
+
+      if (!activeModel) {
+        addToast('No model loaded. Open Models library to load a GGUF model first.', 'warning');
+        return;
+      }
+
+      setIsPlanning(true);
+      setActiveTab('chat');
+
+      const userMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: prompt,
+        timestamp: Date.now(),
+      };
+
+      const assistantMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+      };
+
+      setChatMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+      if (typeof window !== 'undefined' && window.modelForge?.runPlanAgent) {
+        try {
+          await window.modelForge.runPlanAgent({
+            projectId: activeProj.id,
+            prompt,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          addToast(`Planning failed: ${msg}`, 'error');
+          setIsPlanning(false);
+          setChatMessages((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                content: `Error: ${msg}`,
+                isStreaming: false,
+              };
+            }
+            return updated;
+          });
+        }
+      }
+    },
+    [activeProjectId, projects, activeModel, addToast, setActiveTab]
+  );
+
+  const handleStopPlanAgent = useCallback(async (): Promise<boolean> => {
+    if (typeof window !== 'undefined' && window.modelForge?.stopPlanAgent) {
+      const stopped = await window.modelForge.stopPlanAgent();
+      setIsPlanning(false);
+      return stopped;
+    }
+    setIsPlanning(false);
+    return false;
+  }, []);
+
+  const handleClearAgentActivities = useCallback(() => {
+    setAgentActivities([]);
+    setAgentPlanState(null);
+  }, []);
+
   // Global Ctrl+K shortcut listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -495,12 +628,8 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const activeProject = projects.find((p) => p.id === activeProjectId) || null;
-  const selectedModel = models.find((m) => m.id === selectedModelId) || null;
-  const activeModel = inferenceState?.activeModel || null;
-  const isGenerating = inferenceState?.generationState === 'generating';
-
   return (
+
     <AppStoreContext.Provider
       value={{
         currentPage,
@@ -511,7 +640,7 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         updateSettings,
         projects,
         activeProject,
-        setActiveProjectId,
+        setActiveProjectId: handleSetActiveProjectId,
         addProject: handleAddProject,
         removeProject: handleRemoveProject,
 
@@ -539,6 +668,15 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         sendChatMessage: handleSendChatMessage,
         stopGeneration: handleStopGeneration,
         clearChat: handleClearChat,
+
+        // Plan Agent (Pass 4)
+        agentActivities,
+        agentPlanState,
+        isPlanning,
+        runPlanAgent: handleRunPlanAgent,
+        stopPlanAgent: handleStopPlanAgent,
+        clearAgentActivities: handleClearAgentActivities,
+
 
         hardwareInfo,
         toasts,

@@ -26,7 +26,7 @@ async function resolveCanonicalPreload(): Promise<string> {
   const canonicalPreload = path.join(__dirname, '../preload/index.cjs');
   const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
-  console.info(`[ModelForge Main] Model Forge v${app.getVersion?.() || '0.3.2'} | Electron v${process.versions.electron} | Node v${process.versions.node}`);
+  console.info(`[ModelForge Main] Model Forge v${app.getVersion?.() || '0.4.0'} | Electron v${process.versions.electron} | Node v${process.versions.node}`);
   console.info(`[ModelForge Main] Canonical preload path: ${canonicalPreload}`);
 
   // In development, wait up to 3000ms for preload compilation if main process started slightly earlier

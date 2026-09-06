@@ -3,6 +3,8 @@ import path from 'node:path';
 import { AppSettings, Project } from '../shared/types';
 import { DEFAULT_SETTINGS, SCHEMA_VERSION } from '../shared/constants';
 import { normalizePath } from './models/scanner';
+import { ProjectProfiler, resolveCanonicalPath } from './workspace';
+
 
 export class PersistenceStore {
   private dataDir: string;
@@ -214,29 +216,174 @@ export class PersistenceStore {
         return [];
       }
 
-      return parsed.filter((item): item is Project => this.isValidProject(item));
+      let migrationOccurred = false;
+      const validItems = parsed.filter((item): item is Record<string, unknown> => this.isValidProject(item));
+      const projects = validItems.map((item) => {
+        if (this.needsProjectMigration(item)) {
+          migrationOccurred = true;
+          return this.migrateProjectRecord(item);
+        }
+        return item as unknown as Project;
+      });
+
+      if (migrationOccurred) {
+        this.saveProjects(projects);
+      }
+
+      return projects;
     } catch (err) {
       console.error('Failed to load projects:', err);
       return [];
     }
   }
 
-  public addProject(project: Project): Project[] {
-    const projects = this.getProjects();
-    const existingIndex = projects.findIndex((p) => normalizePath(p.path) === normalizePath(project.path));
-    if (existingIndex >= 0) {
-      projects[existingIndex] = project;
-    } else {
-      projects.push(project);
+  public needsProjectMigration(p: Record<string, unknown>): boolean {
+    return (
+      typeof p.canonicalRootPath !== 'string' ||
+      typeof p.rootPath !== 'string' ||
+      typeof p.lastOpenedAt !== 'string' ||
+      typeof p.isGitRepository !== 'boolean' ||
+      !Array.isArray(p.frameworkHints) ||
+      !Array.isArray(p.languages) ||
+      p.packageManager === undefined
+    );
+  }
+
+  public migrateProjectRecord(item: Record<string, unknown>): Project {
+    const rawPath =
+      typeof item.rootPath === 'string' && item.rootPath.trim()
+        ? item.rootPath.trim()
+        : typeof item.path === 'string'
+        ? item.path.trim()
+        : '';
+    const resolvedPath = path.resolve(rawPath);
+    const canonical = resolveCanonicalPath(resolvedPath);
+
+    let isGit = typeof item.isGitRepository === 'boolean' ? item.isGitRepository : false;
+    let frameworkHints = Array.isArray(item.frameworkHints) ? (item.frameworkHints as string[]) : [];
+    let languages = Array.isArray(item.languages) ? (item.languages as string[]) : [];
+    let packageManager = typeof item.packageManager === 'string' ? item.packageManager : null;
+
+    if (fs.existsSync(canonical)) {
+      try {
+        const profile = ProjectProfiler.profile(canonical);
+        isGit = profile.isGitRepository;
+        if (frameworkHints.length === 0) frameworkHints = profile.frameworkHints;
+        if (languages.length === 0) languages = profile.languages;
+        if (!packageManager) packageManager = profile.packageManager;
+      } catch {
+        // Ignore profiling failures on disk during migration
+      }
     }
+
+    return {
+      id: typeof item.id === 'string' ? item.id : path.basename(canonical),
+      name: typeof item.name === 'string' ? item.name : path.basename(canonical),
+      rootPath: resolvedPath,
+      canonicalRootPath: canonical,
+      path: resolvedPath,
+      createdAt: typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString(),
+      lastOpenedAt: typeof item.lastOpenedAt === 'string' ? item.lastOpenedAt : new Date().toISOString(),
+      isGitRepository: isGit,
+      frameworkHints,
+      languages,
+      packageManager,
+    };
+  }
+
+  public addProject(project: Partial<Project> & { id: string; name: string; path?: string; rootPath?: string }): Project[] {
+    const projects = this.getProjects();
+    const targetPath = project.rootPath || project.path || '';
+    const resolved = path.resolve(targetPath);
+    const canonical = resolveCanonicalPath(resolved);
+
+    let isGit = typeof project.isGitRepository === 'boolean' ? project.isGitRepository : false;
+    let frameworkHints = Array.isArray(project.frameworkHints) ? project.frameworkHints : [];
+    let languages = Array.isArray(project.languages) ? project.languages : [];
+    let packageManager = typeof project.packageManager === 'string' ? project.packageManager : null;
+
+    if (fs.existsSync(canonical)) {
+      try {
+        const profile = ProjectProfiler.profile(canonical);
+        isGit = profile.isGitRepository;
+        if (frameworkHints.length === 0) frameworkHints = profile.frameworkHints;
+        if (languages.length === 0) languages = profile.languages;
+        if (!packageManager) packageManager = profile.packageManager;
+      } catch {
+        // ignore profiling errors
+      }
+    }
+
+    const fullProject: Project = {
+      id: project.id,
+      name: project.name,
+      rootPath: resolved,
+      canonicalRootPath: canonical,
+      path: resolved,
+      createdAt: project.createdAt || new Date().toISOString(),
+      lastOpenedAt: new Date().toISOString(),
+      isGitRepository: isGit,
+      frameworkHints,
+      languages,
+      packageManager,
+    };
+
+    const existingIndex = projects.findIndex(
+      (p) => normalizePath(p.canonicalRootPath || p.path) === normalizePath(canonical)
+    );
+
+    if (existingIndex >= 0) {
+      projects[existingIndex] = fullProject;
+    } else {
+      projects.push(fullProject);
+    }
+
     this.saveProjects(projects);
+
+    // Set as active if none active or updating current
+    const currentActive = this.getActiveProjectId();
+    if (!currentActive) {
+      this.setActiveProjectId(fullProject.id);
+    }
+
     return projects;
   }
 
   public removeProject(id: string): Project[] {
     const projects = this.getProjects().filter((p) => p.id !== id);
     this.saveProjects(projects);
+
+    // If removed project was active, select another
+    const settings = this.getSettings();
+    if (settings.activeProjectId === id) {
+      this.setActiveProjectId(projects[0]?.id || null);
+    }
+
     return projects;
+  }
+
+  public getActiveProjectId(): string | null {
+    const settings = this.getSettings();
+    if (settings.activeProjectId) {
+      const projects = this.getProjects();
+      if (projects.some((p) => p.id === settings.activeProjectId)) {
+        return settings.activeProjectId;
+      }
+    }
+    const projects = this.getProjects();
+    return projects[0]?.id || null;
+  }
+
+  public setActiveProjectId(id: string | null): void {
+    this.updateSettings({ activeProjectId: id });
+    if (id) {
+      const projects = this.getProjects();
+      const target = projects.find((p) => p.id === id);
+      if (target) {
+        target.lastOpenedAt = new Date().toISOString();
+        this.saveProjects(projects);
+      }
+    }
   }
 
   public saveProjects(projects: Project[]): void {
@@ -254,8 +401,9 @@ export class PersistenceStore {
     return (
       typeof p.id === 'string' &&
       typeof p.name === 'string' &&
-      typeof p.path === 'string' &&
+      (typeof p.path === 'string' || typeof p.rootPath === 'string') &&
       typeof p.createdAt === 'string'
     );
   }
 }
+

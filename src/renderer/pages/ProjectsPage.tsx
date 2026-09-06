@@ -1,10 +1,19 @@
-import React from 'react';
-import { Folder, FolderPlus, Trash2, Calendar } from 'lucide-react';
+import React, { useState } from 'react';
+import { Folder, FolderPlus, Trash2, Calendar, GitBranch, ShieldAlert } from 'lucide-react';
 import { useAppStore } from '@/store/AppStoreContext';
+import { Project } from '@shared/types';
 import './ProjectsPage.css';
 
 export const ProjectsPage: React.FC = () => {
   const { projects, activeProject, setActiveProjectId, addProject, removeProject, setCurrentPage } = useAppStore();
+  const [projectToRemove, setProjectToRemove] = useState<Project | null>(null);
+
+  const handleConfirmRemove = () => {
+    if (projectToRemove) {
+      removeProject(projectToRemove.id);
+      setProjectToRemove(null);
+    }
+  };
 
   return (
     <div className="projects-page">
@@ -40,6 +49,7 @@ export const ProjectsPage: React.FC = () => {
         <div className="projects-list-grid">
           {projects.map((proj) => {
             const isActive = activeProject?.id === proj.id;
+            const displayPath = proj.rootPath || proj.path;
             return (
               <div
                 key={proj.id}
@@ -56,8 +66,8 @@ export const ProjectsPage: React.FC = () => {
                         <span className="project-name">{proj.name}</span>
                         {isActive && <span className="badge badge-local">Active</span>}
                       </div>
-                      <span className="project-path font-mono" title={proj.path}>
-                        {proj.path}
+                      <span className="project-path font-mono" title={displayPath}>
+                        {displayPath}
                       </span>
                     </div>
                   </div>
@@ -66,12 +76,37 @@ export const ProjectsPage: React.FC = () => {
                     className="project-delete-btn"
                     onClick={(e) => {
                       e.stopPropagation();
-                      removeProject(proj.id);
+                      setProjectToRemove(proj);
                     }}
-                    title="Remove from Model Forge"
+                    title="Remove from Model Forge (keeps local files intact)"
                   >
                     <Trash2 size={13} />
                   </button>
+                </div>
+
+                {/* Project Intelligence Badges */}
+                <div className="project-tags-row">
+                  {proj.isGitRepository && (
+                    <span className="badge badge-git" title="Git repository detected">
+                      <GitBranch size={10} style={{ display: 'inline', marginRight: 3 }} />
+                      Git
+                    </span>
+                  )}
+                  {proj.packageManager && (
+                    <span className="badge badge-pm" title={`Package manager: ${proj.packageManager}`}>
+                      {proj.packageManager}
+                    </span>
+                  )}
+                  {proj.languages?.slice(0, 3).map((lang) => (
+                    <span key={lang} className="badge badge-lang">
+                      {lang}
+                    </span>
+                  ))}
+                  {proj.frameworkHints?.slice(0, 3).map((hint) => (
+                    <span key={hint} className="badge badge-framework">
+                      {hint}
+                    </span>
+                  ))}
                 </div>
 
                 <div className="project-card-footer">
@@ -107,6 +142,32 @@ export const ProjectsPage: React.FC = () => {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Non-Destructive Project Removal Confirmation Modal */}
+      {projectToRemove && (
+        <div className="modal-backdrop" onClick={() => setProjectToRemove(null)}>
+          <div className="panel project-remove-modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ShieldAlert size={20} className="text-warning" />
+              <h3 className="modal-title">Remove Project from Model Forge?</h3>
+            </div>
+            <p className="modal-desc">
+              Are you sure you want to remove <strong>{projectToRemove.name}</strong> from Model Forge?
+            </p>
+            <div className="modal-notice">
+              <strong>Non-Destructive Action:</strong> Your local project files, git repository, and code on disk will <u>NOT</u> be touched or deleted. This only removes the workspace registration from Model Forge.
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setProjectToRemove(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-danger" onClick={handleConfirmRemove}>
+                Remove from Model Forge
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -2,7 +2,8 @@ import { BrowserWindow, dialog, ipcMain } from 'electron';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { AppSettings, ModelLibrary, ModelRecord, Project, SendChatMessagePayload } from '../shared/types';
+import { AppSettings, ModelLibrary, ModelRecord, SendChatMessagePayload } from '../shared/types';
+
 import { IPC_CHANNELS, MAX_PROMPT_CHARS } from '../shared/constants';
 import { PersistenceStore } from './store';
 import { getHardwareInfo } from './hardware';
@@ -10,14 +11,20 @@ import { ModelRegistry } from './models/registry';
 import { normalizePath, scanDirectoriesForGguf } from './models/scanner';
 import { getDriveStorageForPath } from './models/storage';
 import { InferenceService } from './inference';
+import { PlanAgent } from './agent';
+import { WorkspaceGuard, WorkspaceTools } from './workspace';
 
 export function registerIpcHandlers(
   mainWindow: BrowserWindow,
   store: PersistenceStore,
   registry: ModelRegistry,
-  inferenceService: InferenceService
+  inferenceService: InferenceService,
+  existingPlanAgent?: PlanAgent
 ): void {
+  const planAgent = existingPlanAgent || new PlanAgent(inferenceService);
+
   // Setup inference callbacks for streaming and state sync
+
   inferenceService.setCallbacks(
     (chunk) => {
       if (!mainWindow.isDestroyed()) {
@@ -174,16 +181,21 @@ export function registerIpcHandlers(
 
     const selectedPath = result.filePaths[0];
     const projectName = path.basename(selectedPath) || selectedPath;
+    const newId = crypto.randomUUID();
 
-    const newProject: Project = {
-      id: crypto.randomUUID(),
+    store.addProject({
+      id: newId,
       name: projectName,
+      rootPath: selectedPath,
       path: selectedPath,
-      createdAt: new Date().toISOString(),
-    };
+    });
 
-    store.addProject(newProject);
-    return newProject;
+    const updatedProjects = store.getProjects();
+    const created = updatedProjects.find((p) => p.id === newId) || updatedProjects[updatedProjects.length - 1];
+    if (created) {
+      store.setActiveProjectId(created.id);
+    }
+    return created || null;
   });
 
   ipcMain.handle(IPC_CHANNELS.REMOVE_PROJECT, (_event, id: unknown) => {
@@ -193,6 +205,15 @@ export function registerIpcHandlers(
     store.removeProject(id);
     return true;
   });
+
+  ipcMain.handle(IPC_CHANNELS.SET_ACTIVE_PROJECT, (_event, id: unknown) => {
+    if (typeof id !== 'string' && id !== null) {
+      return false;
+    }
+    store.setActiveProjectId(id);
+    return true;
+  });
+
 
   // Model Library Roots
   ipcMain.handle(IPC_CHANNELS.GET_MODEL_LIBRARIES, () => {
@@ -332,6 +353,116 @@ export function registerIpcHandlers(
 
   ipcMain.handle(IPC_CHANNELS.CLEAR_CHAT, async () => {
     return inferenceService.clearChat();
+  });
+
+  // Plan Agent & Workspace Intelligence (Pass 4)
+  ipcMain.handle(IPC_CHANNELS.RUN_PLAN_AGENT, async (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('Invalid runPlan payload');
+    }
+    const { projectId, prompt } = payload as { projectId?: string; prompt?: string };
+    if (!projectId || typeof projectId !== 'string' || !prompt || typeof prompt !== 'string') {
+      throw new Error('projectId and non-empty prompt are required');
+    }
+
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      throw new Error(`Project not found with id: "${projectId}"`);
+    }
+
+    const sessionId = crypto.randomUUID();
+
+    // Launch plan execution asynchronously and stream updates to renderer
+    planAgent
+      .startPlanning(project, prompt, {
+        onActivity: (activity) => {
+          if (!mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.AGENT_ACTIVITY, activity);
+          }
+        },
+        onChunk: (chunk) => {
+          if (!mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.AGENT_CHUNK, chunk);
+            // Also forward to INFERENCE_CHUNK so existing Chat tab can display it seamlessly
+            mainWindow.webContents.send(IPC_CHANNELS.INFERENCE_CHUNK, chunk);
+          }
+        },
+        onStateChange: (state) => {
+          if (!mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATE_CHANGED, state);
+          }
+        },
+      })
+      .catch((err) => {
+        console.error('[ModelForge PlanAgent] Error executing plan agent:', err);
+      });
+
+    return { success: true, sessionId };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.STOP_PLAN_AGENT, async () => {
+    return planAgent.stopPlanning();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_AGENT_STATE, () => {
+    return planAgent.getState();
+  });
+
+  // Read-Only Workspace Inspection Tools
+  const resolveProjectGuard = (projectId?: string): WorkspaceGuard => {
+    const targetId = projectId || store.getActiveProjectId();
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === targetId);
+    if (!project) {
+      throw new Error('No active project found for inspection');
+    }
+    return new WorkspaceGuard(project.rootPath || project.path);
+  };
+
+
+  ipcMain.handle(IPC_CHANNELS.GET_PROJECT_OVERVIEW, async (_event, projectId?: unknown) => {
+    const guard = resolveProjectGuard(typeof projectId === 'string' ? projectId : undefined);
+    const tools = new WorkspaceTools(guard);
+    return tools.getProjectOverview();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.LIST_DIRECTORY, async (_event, options?: unknown) => {
+    const opts = (options && typeof options === 'object' ? options : {}) as {
+      path?: string;
+      recursive?: boolean;
+      maxDepth?: number;
+      projectId?: string;
+    };
+    const guard = resolveProjectGuard(opts.projectId);
+    const tools = new WorkspaceTools(guard);
+    return tools.listDirectory(opts);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.READ_FILE, async (_event, options?: unknown) => {
+    if (!options || typeof options !== 'object') {
+      throw new Error('Missing read options');
+    }
+    const opts = options as { path: string; startLine?: number; endLine?: number; projectId?: string };
+    const guard = resolveProjectGuard(opts.projectId);
+    const tools = new WorkspaceTools(guard);
+    return tools.readFile(opts);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SEARCH_TEXT, async (_event, options?: unknown) => {
+    if (!options || typeof options !== 'object') {
+      throw new Error('Missing search options');
+    }
+    const opts = options as {
+      query: string;
+      path?: string;
+      caseSensitive?: boolean;
+      maxMatches?: number;
+      projectId?: string;
+    };
+    const guard = resolveProjectGuard(opts.projectId);
+    const tools = new WorkspaceTools(guard);
+    return tools.searchText(opts);
   });
 
   // Window Controls

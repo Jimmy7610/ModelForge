@@ -37,6 +37,7 @@ export interface AppSettings {
   modelDirectory?: string;
   confirmDestructiveActions: boolean;
   compactMode: boolean;
+  activeProjectId?: string | null;
 }
 
 export interface Project {
@@ -44,7 +45,16 @@ export interface Project {
   name: string;
   path: string;
   createdAt: string;
+  rootPath?: string;
+  canonicalRootPath?: string;
+  lastOpenedAt?: string;
+  isGitRepository?: boolean;
+  frameworkHints?: string[];
+  languages?: string[];
+  packageManager?: string | null;
 }
+
+
 
 export interface DriveStorageInfo {
   mountPath: string;
@@ -178,6 +188,34 @@ export interface BridgeInfo {
   platform: string;
 }
 
+export type AgentActivityStatus = 'running' | 'done' | 'error';
+
+export interface AgentActivityItem {
+  id: string;
+  label: string;
+  time: string;
+  status: AgentActivityStatus;
+  detail?: string;
+  toolName?: string;
+  toolArgs?: Record<string, unknown>;
+}
+
+export type AgentPlanStatus = 'idle' | 'running' | 'completed' | 'error';
+
+export interface AgentPlanState {
+  status: AgentPlanStatus;
+  activeProjectId: string | null;
+  activities: AgentActivityItem[];
+  currentActivity?: string;
+  planContent?: string;
+  error?: string;
+}
+
+export interface RunPlanPayload {
+  projectId: string;
+  prompt: string;
+}
+
 export interface ModelForgeAPI {
   // Diagnostics & Bridge Health
   getBridgeInfo: () => BridgeInfo;
@@ -188,6 +226,7 @@ export interface ModelForgeAPI {
   getProjects: () => Promise<Project[]>;
   addProject: () => Promise<Project | null>;
   removeProject: (id: string) => Promise<boolean>;
+  setActiveProject: (id: string | null) => Promise<boolean>;
   
   // Model Library Management
   getModelLibraries: () => Promise<ModelLibrary[]>;
@@ -210,6 +249,20 @@ export interface ModelForgeAPI {
   onInferenceChunk: (callback: (chunk: ChatGenerationChunk) => void) => () => void;
   onInferenceStateChange: (callback: (state: InferenceState) => void) => () => void;
 
+  // Plan Agent & Workspace Intelligence (Pass 4)
+  runPlanAgent: (payload: RunPlanPayload) => Promise<{ success: boolean; sessionId: string }>;
+  stopPlanAgent: () => Promise<boolean>;
+  getAgentState: () => Promise<AgentPlanState>;
+  onAgentActivity: (callback: (activity: AgentActivityItem) => void) => () => void;
+  onAgentChunk: (callback: (chunk: ChatGenerationChunk) => void) => () => void;
+  onAgentStateChange: (callback: (state: AgentPlanState) => void) => () => void;
+
+  // Read-Only Workspace Inspection Tools
+  getProjectOverview: (projectId?: string) => Promise<unknown>;
+  listDirectory: (options?: { path?: string; recursive?: boolean; maxDepth?: number }) => Promise<unknown>;
+  readFile: (options: { path: string; startLine?: number; endLine?: number }) => Promise<unknown>;
+  searchText: (options: { query: string; path?: string; caseSensitive?: boolean; maxMatches?: number }) => Promise<unknown>;
+
   // Window Controls
   windowControl: (action: 'minimize' | 'maximize' | 'close') => Promise<void>;
   isMaximized: () => Promise<boolean>;
@@ -222,3 +275,4 @@ declare global {
     modelForge: ModelForgeAPI;
   }
 }
+

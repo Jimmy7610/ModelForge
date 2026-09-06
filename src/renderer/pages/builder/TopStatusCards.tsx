@@ -3,7 +3,16 @@ import { Folder, Box, Cpu, Lock, CpuIcon, Database } from 'lucide-react';
 import { useAppStore } from '@/store/AppStoreContext';
 import './TopStatusCards.css';
 
+function formatAbbreviatedPath(fullPath?: string): string {
+  if (!fullPath) return 'Click to choose project';
+  const norm = fullPath.replace(/\\/g, '/');
+  const parts = norm.split('/').filter(Boolean);
+  if (parts.length <= 3) return norm;
+  return `${parts[0]}/.../${parts.slice(-2).join('/')}`;
+}
+
 export const TopStatusCards: React.FC = () => {
+
   const { activeProject, hardwareInfo, models, activeModel, inferenceState, setCurrentPage, addProject } = useAppStore();
 
   const handleProjectClick = () => {
@@ -30,11 +39,14 @@ export const TopStatusCards: React.FC = () => {
           <span className="status-card-value">
             {activeProject ? activeProject.name : 'No project selected'}
           </span>
-          <span className="status-card-sub">
-            {activeProject ? activeProject.path : 'Click to choose project'}
+          <span className="status-card-sub" title={activeProject ? activeProject.rootPath || activeProject.path : undefined}>
+            {activeProject
+              ? formatAbbreviatedPath(activeProject.rootPath || activeProject.path)
+              : 'Click to choose project'}
           </span>
         </div>
       </div>
+
 
       {/* 2. Active Model */}
       <div className="status-card clickable" onClick={() => setCurrentPage('models')} title="Click to view local model library">

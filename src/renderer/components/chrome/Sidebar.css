@@ -179,6 +179,22 @@
   color: var(--text-muted);
 }
 
+.sidebar-model-item.active-model-item {
+  border-left: 2px solid #10b981;
+  background: rgba(16, 185, 129, 0.06);
+}
+
+.sidebar-active-badge {
+  font-size: 9px;
+  font-weight: 600;
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  line-height: 1.2;
+}
+
 .sidebar-view-all-btn {
   display: flex;
   align-items: center;

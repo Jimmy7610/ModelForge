@@ -2,19 +2,34 @@ import { BrowserWindow, dialog, ipcMain } from 'electron';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { AppSettings, ModelLibrary, ModelRecord, Project } from '../shared/types';
-import { IPC_CHANNELS } from '../shared/constants';
+import { AppSettings, ModelLibrary, ModelRecord, Project, SendChatMessagePayload } from '../shared/types';
+import { IPC_CHANNELS, MAX_PROMPT_CHARS } from '../shared/constants';
 import { PersistenceStore } from './store';
 import { getHardwareInfo } from './hardware';
 import { ModelRegistry } from './models/registry';
 import { normalizePath, scanDirectoriesForGguf } from './models/scanner';
 import { getDriveStorageForPath } from './models/storage';
+import { InferenceService } from './inference';
 
 export function registerIpcHandlers(
   mainWindow: BrowserWindow,
   store: PersistenceStore,
-  registry: ModelRegistry
+  registry: ModelRegistry,
+  inferenceService: InferenceService
 ): void {
+  // Setup inference callbacks for streaming and state sync
+  inferenceService.setCallbacks(
+    (chunk) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.INFERENCE_CHUNK, chunk);
+      }
+    },
+    (state) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.INFERENCE_STATE_CHANGED, state);
+      }
+    }
+  );
   // Track last scan timestamps per directory
   const scanTimestamps = new Map<string, string>();
 
@@ -252,6 +267,53 @@ export function registerIpcHandlers(
       return null;
     }
     return getDriveStorageForPath(dirs[0]);
+  });
+
+  // Local Inference & Streaming Chat Handlers (Pass 3)
+  ipcMain.handle(IPC_CHANNELS.GET_INFERENCE_STATE, async () => {
+    return inferenceService.getState();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_INFERENCE_RUNTIME_INFO, async () => {
+    return inferenceService.getRuntimeInfo();
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.LOAD_MODEL,
+    async (_event, payload: { modelId?: string; contextSize?: number }) => {
+      if (!payload || typeof payload.modelId !== 'string' || !payload.modelId.trim()) {
+        throw new Error('Valid modelId is required to load a model');
+      }
+      return inferenceService.loadModel(payload.modelId.trim(), payload.contextSize);
+    }
+  );
+
+  ipcMain.handle(IPC_CHANNELS.UNLOAD_MODEL, async () => {
+    return inferenceService.unloadModel();
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.SEND_CHAT_MESSAGE,
+    async (_event, payload: SendChatMessagePayload) => {
+      if (!payload || typeof payload.prompt !== 'string') {
+        throw new Error('Valid prompt string is required');
+      }
+      if (payload.prompt.trim().length === 0) {
+        throw new Error('Prompt cannot be empty');
+      }
+      if (payload.prompt.length > MAX_PROMPT_CHARS) {
+        throw new Error(`Prompt exceeds maximum character length of ${MAX_PROMPT_CHARS}`);
+      }
+      return inferenceService.sendChatMessage(payload);
+    }
+  );
+
+  ipcMain.handle(IPC_CHANNELS.STOP_GENERATION, async () => {
+    return inferenceService.stopGeneration();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLEAR_CHAT, async () => {
+    return inferenceService.clearChat();
   });
 
   // Window Controls

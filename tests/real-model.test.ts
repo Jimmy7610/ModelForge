@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import { parseGgufHeaderSync } from '../src/main/gguf/parser';
 
 describe('Real-World Local GGUF Validation', () => {
-  const realModelPath = 'C:\\Users\\Jimmy\\Downloads\\Muse-Glimmer-30B-UD-Q4_K_XL.gguf';
+  const realModelPath = process.env.MODEL_FORGE_TEST_GGUF;
 
   it('inspects real-world GGUF model without reading entire file into RAM', () => {
-    if (!fs.existsSync(realModelPath)) {
-      console.info('Real model not present, skipping real fixture test');
+    if (!realModelPath || !fs.existsSync(realModelPath)) {
+      console.info('MODEL_FORGE_TEST_GGUF not set or file not found, skipping real fixture test');
       return;
     }
 

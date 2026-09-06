@@ -5,6 +5,8 @@ import { registerIpcHandlers } from './ipc';
 import { PersistenceStore } from './store';
 import { ModelRegistry } from './models/registry';
 
+import { InferenceService, disposeLlamaInstance } from './inference';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 process.env.APP_ROOT = path.join(__dirname, '../..');
@@ -17,10 +19,13 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
   : RENDERER_DIST;
 
 let mainWindow: BrowserWindow | null = null;
+let activeInferenceService: InferenceService | null = null;
 
 function createWindow(): void {
   const store = new PersistenceStore(app.getPath('userData'));
   const registry = new ModelRegistry(app.getPath('userData'));
+  const inferenceService = new InferenceService(registry);
+  activeInferenceService = inferenceService;
 
   mainWindow = new BrowserWindow({
     title: 'Model Forge',
@@ -49,7 +54,7 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
-  registerIpcHandlers(mainWindow, store, registry);
+  registerIpcHandlers(mainWindow, store, registry, inferenceService);
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
@@ -71,4 +76,15 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
+});
+
+app.on('before-quit', async () => {
+  if (activeInferenceService) {
+    try {
+      await activeInferenceService.unloadModel();
+    } catch {
+      // Ignore on exit
+    }
+  }
+  await disposeLlamaInstance();
 });

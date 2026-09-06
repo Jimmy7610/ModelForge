@@ -4,22 +4,23 @@ import { useAppStore } from '@/store/AppStoreContext';
 import './PromptComposer.css';
 
 export const PromptComposer: React.FC = () => {
-  const { activeProject, addToast } = useAppStore();
+  const { activeProject, activeModel, addToast, setActiveTab } = useAppStore();
   const [prompt, setPrompt] = useState('');
   const [activeMessage, setActiveMessage] = useState<string | null>(null);
 
   const maxChars = 4000;
 
   const handleRunAgent = () => {
-    if (!activeProject) {
-      const msg = 'Select a project and load a model before running an agent.';
+    if (!activeModel) {
+      const msg = 'No model loaded. Open Models library to load a GGUF model first.';
       setActiveMessage(msg);
       addToast(msg, 'warning');
       return;
     }
-    const msg = 'Local inference engine setup is pending. Load a GGUF model in the Models tab to run an agent.';
+    const msg = 'Autonomous agent execution loop is scheduled for Pass 4. Use the Chat tab below for direct real-time model interaction.';
     setActiveMessage(msg);
     addToast(msg, 'info');
+    setActiveTab('chat');
   };
 
   const handlePlan = () => {

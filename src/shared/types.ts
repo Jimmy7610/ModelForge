@@ -101,6 +101,76 @@ export interface ModelScanProgress {
   error?: string;
 }
 
+// Local Inference Types (Pass 3)
+export type InferenceRuntimeStatus = 'uninitialized' | 'initializing' | 'ready' | 'error';
+export type ModelLoadStatus = 'unloaded' | 'loading' | 'loaded' | 'unloading' | 'error';
+export type ChatGenerationStatus = 'idle' | 'generating' | 'stopping' | 'error';
+export type InferenceBackendType = 'cuda' | 'vulkan' | 'metal' | 'cpu' | 'unknown';
+
+export interface InferenceRuntimeInfo {
+  status: InferenceRuntimeStatus;
+  backend: InferenceBackendType;
+  gpuName: string | null;
+  vramTotalBytes: number;
+  vramFreeBytes: number;
+  vramUsedBytes: number;
+  ramTotalBytes: number;
+  ramFreeBytes: number;
+  errorMessage?: string;
+}
+
+export interface ActiveModelInfo {
+  modelId: string;
+  name: string;
+  filePath: string;
+  architecture: string;
+  quantization: string;
+  contextLength: number;
+  loadedAt: number;
+  gpuLayers: number | string;
+  totalLayers: number;
+}
+
+export interface ChatMetrics {
+  totalTokens: number;
+  tokensPerSecond: number;
+  firstTokenMs: number;
+  totalTimeMs: number;
+}
+
+export interface ChatGenerationChunk {
+  requestId: string;
+  text: string;
+  isDone: boolean;
+  error?: string;
+  metrics?: ChatMetrics;
+}
+
+export interface SendChatMessagePayload {
+  prompt: string;
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export interface InferenceState {
+  runtime: InferenceRuntimeInfo;
+  modelState: ModelLoadStatus;
+  activeModel: ActiveModelInfo | null;
+  generationState: ChatGenerationStatus;
+  activeRequestId: string | null;
+  errorMessage?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  metrics?: ChatMetrics;
+  isStreaming?: boolean;
+}
+
 export interface ModelForgeAPI {
   getHardwareInfo: () => Promise<HardwareInfo>;
   getSettings: () => Promise<AppSettings>;
@@ -118,6 +188,17 @@ export interface ModelForgeAPI {
   getModels: () => Promise<ModelRecord[]>;
   getModelDetails: (modelId: string) => Promise<ModelRecord | null>;
   getPrimaryDriveStorage: () => Promise<DriveStorageInfo | null>;
+
+  // Local Inference & Streaming Chat (Pass 3)
+  getInferenceState: () => Promise<InferenceState>;
+  getInferenceRuntimeInfo: () => Promise<InferenceRuntimeInfo>;
+  loadModel: (modelId: string, contextSize?: number) => Promise<ActiveModelInfo>;
+  unloadModel: () => Promise<boolean>;
+  sendChatMessage: (payload: SendChatMessagePayload) => Promise<{ requestId: string }>;
+  stopGeneration: () => Promise<boolean>;
+  clearChat: () => Promise<boolean>;
+  onInferenceChunk: (callback: (chunk: ChatGenerationChunk) => void) => () => void;
+  onInferenceStateChange: (callback: (state: InferenceState) => void) => () => void;
 
   // Window Controls
   windowControl: (action: 'minimize' | 'maximize' | 'close') => Promise<void>;

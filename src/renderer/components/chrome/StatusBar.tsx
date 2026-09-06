@@ -4,11 +4,12 @@ import { APP_VERSION } from '@shared/constants';
 import './StatusBar.css';
 
 export const StatusBar: React.FC = () => {
-  const { hardwareInfo } = useAppStore();
+  const { hardwareInfo, activeModel, inferenceState, isGenerating } = useAppStore();
 
   const ramUsed = hardwareInfo ? `${hardwareInfo.usedMemoryGB} / ${hardwareInfo.totalMemoryGB} GB` : '—';
   const cpuText = hardwareInfo ? `${hardwareInfo.cpuCores} Cores` : '—';
   const gpuText = hardwareInfo ? hardwareInfo.gpuName : 'GPU detection pending';
+  const backendName = inferenceState?.runtime.backend?.toUpperCase() || 'CPU';
 
   return (
     <footer className="statusbar">
@@ -19,8 +20,24 @@ export const StatusBar: React.FC = () => {
         </div>
         <div className="statusbar-divider" />
         <div className="statusbar-item">
-          <span className="statusbar-text text-secondary">Built-in Core</span>
+          <span className="statusbar-text text-secondary font-mono">
+            Built-in Core: {backendName}
+          </span>
         </div>
+        {activeModel && (
+          <>
+            <div className="statusbar-divider" />
+            <div className="statusbar-item">
+              <span className="status-dot ready" style={{ backgroundColor: '#10b981' }} />
+              <span className="statusbar-text text-primary font-mono">{activeModel.name}</span>
+              {isGenerating && (
+                <span className="statusbar-text text-warning font-medium ml-1">
+                  (Generating...)
+                </span>
+              )}
+            </div>
+          </>
+        )}
         <div className="statusbar-divider" />
         <div className="statusbar-item">
           <span className="statusbar-text text-muted font-mono">v{APP_VERSION}</span>

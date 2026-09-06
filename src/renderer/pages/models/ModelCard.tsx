@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Layers, Cpu, Database, HardDrive, AlertTriangle } from 'lucide-react';
 import { ModelRecord } from '@shared/types';
+import { useAppStore } from '@/store/AppStoreContext';
 import './ModelCard.css';
 
 interface ModelCardProps {
@@ -28,11 +29,13 @@ export function formatContextLength(ctx?: number | null): string {
 }
 
 export const ModelCard: React.FC<ModelCardProps> = ({ model, onSelect }) => {
+  const { activeModel } = useAppStore();
   const isAvailable = model.metadataStatus === 'available';
+  const isLoaded = activeModel?.modelId === model.id;
 
   return (
     <div
-      className={`panel model-card ${!isAvailable ? 'has-error' : ''}`}
+      className={`panel model-card ${isLoaded ? 'is-active-loaded' : ''} ${!isAvailable ? 'has-error' : ''}`}
       onClick={() => onSelect(model)}
       title="Click to view full model details"
     >
@@ -52,7 +55,11 @@ export const ModelCard: React.FC<ModelCardProps> = ({ model, onSelect }) => {
         </div>
 
         <div className="model-status-badge">
-          {isAvailable ? (
+          {isLoaded ? (
+            <span className="badge badge-success font-semibold" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', borderColor: '#10b981', color: '#34d399' }}>
+              <span className="status-dot ready" style={{ backgroundColor: '#10b981', boxShadow: '0 0 6px #10b981' }} /> Active
+            </span>
+          ) : isAvailable ? (
             <span className="badge badge-local">
               <span className="status-dot ready" /> Available
             </span>

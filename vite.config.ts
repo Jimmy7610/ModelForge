@@ -18,7 +18,7 @@ export default defineConfig({
             outDir: 'dist-electron/main',
             minify: false,
             rollupOptions: {
-              external: ['electron'],
+              external: ['electron', 'node-llama-cpp'],
             },
           },
         },

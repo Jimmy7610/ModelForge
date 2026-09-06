@@ -11,10 +11,14 @@ import {
   AlertCircle,
   FileCode,
   Shield,
-  Play,
+  MessageSquare,
+  Square,
+  Loader2,
+  Zap,
 } from 'lucide-react';
 import { ModelRecord } from '@shared/types';
 import { formatFileSize, formatContextLength } from './ModelCard';
+import { useAppStore } from '@/store/AppStoreContext';
 import './ModelDetailsModal.css';
 
 interface ModelDetailsModalProps {
@@ -23,6 +27,17 @@ interface ModelDetailsModalProps {
 }
 
 export const ModelDetailsModal: React.FC<ModelDetailsModalProps> = ({ model, onClose }) => {
+  const {
+    activeModel,
+    inferenceState,
+    loadModel,
+    unloadModel,
+    setCurrentPage,
+    setActiveTab,
+  } = useAppStore();
+
+  const [isLoadingAction, setIsLoadingAction] = React.useState(false);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -34,6 +49,34 @@ export const ModelDetailsModal: React.FC<ModelDetailsModalProps> = ({ model, onC
   }, [onClose]);
 
   if (!model) return null;
+
+  const isCurrentlyLoaded = activeModel?.modelId === model.id;
+  const isAnotherModelLoading = inferenceState?.modelState === 'loading' && !isCurrentlyLoaded;
+  const backendName = inferenceState?.runtime.backend?.toUpperCase() || 'CPU';
+
+  const handleLoad = async () => {
+    setIsLoadingAction(true);
+    try {
+      await loadModel(model.id);
+    } finally {
+      setIsLoadingAction(false);
+    }
+  };
+
+  const handleUnload = async () => {
+    setIsLoadingAction(true);
+    try {
+      await unloadModel();
+    } finally {
+      setIsLoadingAction(false);
+    }
+  };
+
+  const handleOpenChat = () => {
+    onClose();
+    setCurrentPage('builder');
+    setActiveTab('chat');
+  };
 
   return (
     <div className="details-modal-backdrop" onClick={onClose}>
@@ -173,13 +216,34 @@ export const ModelDetailsModal: React.FC<ModelDetailsModalProps> = ({ model, onC
             <div className="details-list">
               <div className="details-row">
                 <span className="details-label">Execution State</span>
-                <span className="details-val text-muted">Not loaded</span>
+                <span className="details-val">
+                  {isCurrentlyLoaded ? (
+                    <span className="text-success font-semibold flex items-center gap-1">
+                      <span className="chat-status-dot active" style={{ display: 'inline-block' }} /> Loaded in Memory
+                    </span>
+                  ) : isAnotherModelLoading ? (
+                    <span className="text-warning">Another model is loading...</span>
+                  ) : (
+                    <span className="text-muted">Available on disk (unloaded)</span>
+                  )}
+                </span>
               </div>
 
               <div className="details-row">
-                <span className="details-label">Built-in Core Integration</span>
-                <span className="details-val text-secondary">Not available yet</span>
+                <span className="details-label">Compute Acceleration</span>
+                <span className="details-val text-secondary font-mono">
+                  Built-in Core: {backendName}
+                </span>
               </div>
+
+              {isCurrentlyLoaded && (
+                <div className="details-row">
+                  <span className="details-label">Allocated Context</span>
+                  <span className="details-val text-primary font-mono">
+                    {activeModel.contextLength} tokens (bounded safe default)
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -188,21 +252,58 @@ export const ModelDetailsModal: React.FC<ModelDetailsModalProps> = ({ model, onC
         <div className="details-modal-footer">
           <div className="details-footer-note">
             <Shield size={13} className="text-success" />
-            <span>100% Local File · Ready for runtime integration</span>
+            <span>100% Local Inference · Zero cloud telemetry</span>
           </div>
 
           <div className="details-footer-actions">
-            <button className="btn btn-secondary" onClick={onClose}>
+            <button className="btn btn-secondary" onClick={onClose} disabled={isLoadingAction}>
               Close
             </button>
-            <button
-              className="btn btn-primary"
-              disabled
-              title="Built-in inference core is not installed yet."
-            >
-              <Play size={13} fill="currentColor" />
-              <span>Load Model</span>
-            </button>
+
+            {isCurrentlyLoaded ? (
+              <>
+                <button
+                  className="btn btn-secondary text-danger"
+                  onClick={handleUnload}
+                  disabled={isLoadingAction}
+                  title="Unload model from RAM/VRAM"
+                >
+                  {isLoadingAction ? (
+                    <Loader2 size={13} className="spin" />
+                  ) : (
+                    <Square size={13} />
+                  )}
+                  <span>Unload Model</span>
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleOpenChat}
+                  title="Open chat tab in builder"
+                >
+                  <MessageSquare size={13} />
+                  <span>Open in Chat</span>
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn btn-primary"
+                onClick={handleLoad}
+                disabled={isLoadingAction || isAnotherModelLoading}
+                title="Load this GGUF model into memory"
+              >
+                {isLoadingAction ? (
+                  <>
+                    <Loader2 size={13} className="spin" />
+                    <span>Loading Model...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap size={13} />
+                    <span>Load Model</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>

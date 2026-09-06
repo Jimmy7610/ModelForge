@@ -1,7 +1,10 @@
 import { AppSettings } from './types';
 
-export const APP_VERSION = '0.2.0';
+export const APP_VERSION = '0.3.0';
 export const SCHEMA_VERSION = 2;
+
+export const MAX_PROMPT_CHARS = 16000;
+export const DEFAULT_CONTEXT_TOKENS = 4096;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   schemaVersion: SCHEMA_VERSION,
@@ -29,6 +32,17 @@ export const IPC_CHANNELS = {
   GET_MODEL_DETAILS: 'modelforge:get-model-details',
   GET_PRIMARY_DRIVE_STORAGE: 'modelforge:get-primary-drive-storage',
   MODEL_SCAN_PROGRESS: 'modelforge:model-scan-progress',
+
+  // Local Inference & Chat (Pass 3)
+  GET_INFERENCE_STATE: 'modelforge:get-inference-state',
+  GET_INFERENCE_RUNTIME_INFO: 'modelforge:get-inference-runtime-info',
+  LOAD_MODEL: 'modelforge:load-model',
+  UNLOAD_MODEL: 'modelforge:unload-model',
+  SEND_CHAT_MESSAGE: 'modelforge:send-chat-message',
+  STOP_GENERATION: 'modelforge:stop-generation',
+  CLEAR_CHAT: 'modelforge:clear-chat',
+  INFERENCE_CHUNK: 'modelforge:inference-chunk',
+  INFERENCE_STATE_CHANGED: 'modelforge:inference-state-changed',
 
   // Window Controls
   WINDOW_CONTROL: 'modelforge:window-control',

@@ -69,6 +69,55 @@ const api: ModelForgeAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_PRIMARY_DRIVE_STORAGE);
   },
 
+  // Local Inference & Streaming Chat (Pass 3)
+  getInferenceState: () => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_INFERENCE_STATE);
+  },
+
+  getInferenceRuntimeInfo: () => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_INFERENCE_RUNTIME_INFO);
+  },
+
+  loadModel: (modelId: string, contextSize?: number) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.LOAD_MODEL, { modelId, contextSize });
+  },
+
+  unloadModel: () => {
+    return ipcRenderer.invoke(IPC_CHANNELS.UNLOAD_MODEL);
+  },
+
+  sendChatMessage: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SEND_CHAT_MESSAGE, payload);
+  },
+
+  stopGeneration: () => {
+    return ipcRenderer.invoke(IPC_CHANNELS.STOP_GENERATION);
+  },
+
+  clearChat: () => {
+    return ipcRenderer.invoke(IPC_CHANNELS.CLEAR_CHAT);
+  },
+
+  onInferenceChunk: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, chunk: any) => {
+      callback(chunk);
+    };
+    ipcRenderer.on(IPC_CHANNELS.INFERENCE_CHUNK, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.INFERENCE_CHUNK, handler);
+    };
+  },
+
+  onInferenceStateChange: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: any) => {
+      callback(state);
+    };
+    ipcRenderer.on(IPC_CHANNELS.INFERENCE_STATE_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.INFERENCE_STATE_CHANGED, handler);
+    };
+  },
+
   // Window Controls
   windowControl: (action: 'minimize' | 'maximize' | 'close'): Promise<void> => {
     return ipcRenderer.invoke(IPC_CHANNELS.WINDOW_CONTROL, action);

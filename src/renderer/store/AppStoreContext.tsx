@@ -7,9 +7,12 @@ import React, {
   ReactNode,
 } from 'react';
 import {
+  ActiveModelInfo,
   AppSettings,
+  ChatMessage,
   DriveStorageInfo,
   HardwareInfo,
+  InferenceState,
   ModelLibrary,
   ModelRecord,
   ModelScanProgress,
@@ -53,6 +56,17 @@ interface AppStoreContextType {
   scanAllModelLibraries: () => Promise<void>;
   refreshModelsAndLibraries: () => Promise<void>;
 
+  // Local Inference & Streaming Chat (Pass 3)
+  inferenceState: InferenceState | null;
+  activeModel: ActiveModelInfo | null;
+  chatMessages: ChatMessage[];
+  isGenerating: boolean;
+  loadModel: (modelId: string, contextSize?: number) => Promise<ActiveModelInfo | null>;
+  unloadModel: () => Promise<boolean>;
+  sendChatMessage: (prompt: string) => Promise<void>;
+  stopGeneration: () => Promise<boolean>;
+  clearChat: () => Promise<boolean>;
+
   hardwareInfo: HardwareInfo | null;
   toasts: ToastItem[];
   addToast: (message: string, type?: ToastItem['type']) => void;
@@ -82,6 +96,10 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ModelScanProgress | null>(null);
+
+  // Local Inference & Streaming Chat (Pass 3)
+  const [inferenceState, setInferenceState] = useState<InferenceState | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const addToast = useCallback((message: string, type: ToastItem['type'] = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -147,12 +165,44 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         })
         .catch(console.error);
 
+      window.modelForge
+        .getInferenceState()
+        .then((state) => {
+          if (state) setInferenceState(state);
+        })
+        .catch(console.error);
+
       window.modelForge.isMaximized().then(setIsMaximized).catch(console.error);
 
       refreshModelsAndLibraries();
 
       const unsubscribeState = window.modelForge.onWindowStateChange((max) => {
         setIsMaximized(max);
+      });
+
+      const unsubscribeInferenceState = window.modelForge.onInferenceStateChange((state) => {
+        setInferenceState(state);
+      });
+
+      const unsubscribeInferenceChunk = window.modelForge.onInferenceChunk((chunk) => {
+        setChatMessages((prev) => {
+          const lastIndex = prev.length - 1;
+          if (lastIndex < 0) return prev;
+          const lastMsg = prev[lastIndex];
+
+          if (lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+            const updated = [...prev];
+            const updatedContent = lastMsg.content + (chunk.text || '');
+            updated[lastIndex] = {
+              ...lastMsg,
+              content: updatedContent,
+              isStreaming: !chunk.isDone,
+              metrics: chunk.metrics || lastMsg.metrics,
+            };
+            return updated;
+          }
+          return prev;
+        });
       });
 
       let unsubscribeScan: (() => void) | undefined;
@@ -170,6 +220,8 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
 
       return () => {
         unsubscribeState();
+        unsubscribeInferenceState();
+        unsubscribeInferenceChunk();
         if (unsubscribeScan) unsubscribeScan();
       };
     }
@@ -300,6 +352,111 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [addToast, refreshModelsAndLibraries]);
 
+  // Local Inference & Streaming Chat Actions (Pass 3)
+  const handleLoadModel = useCallback(
+    async (modelId: string, contextSize?: number): Promise<ActiveModelInfo | null> => {
+      if (typeof window !== 'undefined' && window.modelForge) {
+        try {
+          addToast('Loading model into local memory...', 'info');
+          const loaded = await window.modelForge.loadModel(modelId, contextSize);
+          addToast(`Model "${loaded.name}" loaded successfully`, 'success');
+          return loaded;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          addToast(`Failed to load model: ${msg}`, 'error');
+          return null;
+        }
+      }
+      return null;
+    },
+    [addToast]
+  );
+
+  const handleUnloadModel = useCallback(async (): Promise<boolean> => {
+    if (typeof window !== 'undefined' && window.modelForge) {
+      try {
+        const result = await window.modelForge.unloadModel();
+        if (result) {
+          addToast('Model unloaded', 'info');
+        }
+        return result;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addToast(`Failed to unload model: ${msg}`, 'error');
+        return false;
+      }
+    }
+    return false;
+  }, [addToast]);
+
+  const handleSendChatMessage = useCallback(
+    async (prompt: string): Promise<void> => {
+      if (!prompt.trim()) return;
+
+      if (!inferenceState?.activeModel) {
+        addToast('Please load a model from the Models library first', 'warning');
+        return;
+      }
+
+      const userMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: prompt,
+        timestamp: Date.now(),
+      };
+
+      const assistantMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+      };
+
+      setChatMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+      if (typeof window !== 'undefined' && window.modelForge) {
+        try {
+          await window.modelForge.sendChatMessage({ prompt });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          addToast(`Generation error: ${msg}`, 'error');
+          setChatMessages((prev) => {
+            const updated = [...prev];
+            const lastIndex = updated.length - 1;
+            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
+              updated[lastIndex] = {
+                ...updated[lastIndex],
+                content: updated[lastIndex].content || `Error: ${msg}`,
+                isStreaming: false,
+              };
+            }
+            return updated;
+          });
+        }
+      }
+    },
+    [addToast, inferenceState]
+  );
+
+  const handleStopGeneration = useCallback(async (): Promise<boolean> => {
+    if (typeof window !== 'undefined' && window.modelForge) {
+      return window.modelForge.stopGeneration();
+    }
+    return false;
+  }, []);
+
+  const handleClearChat = useCallback(async (): Promise<boolean> => {
+    if (typeof window !== 'undefined' && window.modelForge) {
+      await window.modelForge.clearChat();
+      setChatMessages([]);
+      addToast('Conversation cleared', 'info');
+      return true;
+    }
+    setChatMessages([]);
+    return true;
+  }, [addToast]);
+
   // Global Ctrl+K shortcut listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -314,6 +471,8 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const activeProject = projects.find((p) => p.id === activeProjectId) || null;
   const selectedModel = models.find((m) => m.id === selectedModelId) || null;
+  const activeModel = inferenceState?.activeModel || null;
+  const isGenerating = inferenceState?.generationState === 'generating';
 
   return (
     <AppStoreContext.Provider
@@ -343,6 +502,17 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         scanModelLibrary: handleScanModelLibrary,
         scanAllModelLibraries: handleScanAllModelLibraries,
         refreshModelsAndLibraries,
+
+        // Inference (Pass 3)
+        inferenceState,
+        activeModel,
+        chatMessages,
+        isGenerating,
+        loadModel: handleLoadModel,
+        unloadModel: handleUnloadModel,
+        sendChatMessage: handleSendChatMessage,
+        stopGeneration: handleStopGeneration,
+        clearChat: handleClearChat,
 
         hardwareInfo,
         toasts,

@@ -42,6 +42,7 @@ export const Sidebar: React.FC = () => {
     currentPage,
     setCurrentPage,
     models,
+    activeModel,
     modelLibraries,
     primaryDriveStorage,
     isScanning,
@@ -104,28 +105,35 @@ export const Sidebar: React.FC = () => {
           <div className="sidebar-models-container">
             {models.length > 0 ? (
               <div className="sidebar-models-list">
-                {previewModels.map((m) => (
-                  <div
-                    key={m.id}
-                    className="sidebar-model-item"
-                    onClick={() => {
-                      setSelectedModelId(m.id);
-                      setCurrentPage('models');
-                    }}
-                    title={`${m.displayName}\nLocation: ${m.path}`}
-                  >
-                    <div className="sidebar-model-top">
-                      <span className="sidebar-model-name">{m.displayName}</span>
-                      <span
-                        className={`status-dot ${m.metadataStatus === 'available' ? 'ready' : 'idle'}`}
-                      />
+                {previewModels.map((m) => {
+                  const isModelActive = activeModel?.modelId === m.id;
+                  return (
+                    <div
+                      key={m.id}
+                      className={`sidebar-model-item ${isModelActive ? 'active-model-item' : ''}`}
+                      onClick={() => {
+                        setSelectedModelId(m.id);
+                        setCurrentPage('models');
+                      }}
+                      title={`${m.displayName}\nLocation: ${m.path}`}
+                    >
+                      <div className="sidebar-model-top">
+                        <span className="sidebar-model-name">{m.displayName}</span>
+                        {isModelActive ? (
+                          <span className="sidebar-active-badge">Active</span>
+                        ) : (
+                          <span
+                            className={`status-dot ${m.metadataStatus === 'available' ? 'ready' : 'idle'}`}
+                          />
+                        )}
+                      </div>
+                      <div className="sidebar-model-sub">
+                        <span>{m.quantization || (m.metadataStatus === 'error' ? 'Metadata error' : 'Available')}</span>
+                        {m.contextLength && <span>· {Math.round(m.contextLength / 1024)}K</span>}
+                      </div>
                     </div>
-                    <div className="sidebar-model-sub">
-                      <span>{m.quantization || (m.metadataStatus === 'error' ? 'Metadata error' : 'Available')}</span>
-                      {m.contextLength && <span>· {Math.round(m.contextLength / 1024)}K</span>}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {models.length > previewModels.length && (
                   <button

@@ -17,6 +17,7 @@ import {
 import { useAppStore } from '@/store/AppStoreContext';
 import { WorkspaceTab } from '@shared/types';
 import './WorkspaceTabs.css';
+import { ChatTab } from './ChatTab';
 
 interface ChangedFileItem {
   id: string;
@@ -95,17 +96,9 @@ export const WorkspaceTabs: React.FC = () => {
       </div>
 
       {/* Tab Contents */}
-      <div className="tab-content-viewport">
+      <div className={`tab-content-viewport ${activeTab === 'chat' ? 'chat-viewport' : ''}`}>
         {/* TAB: CHAT */}
-        {activeTab === 'chat' && (
-          <div className="tab-empty-state">
-            <MessageSquare size={28} className="text-muted" />
-            <div className="tab-empty-title">No active session</div>
-            <div className="tab-empty-sub">
-              Chat session with the local model agent will initialize when a run starts.
-            </div>
-          </div>
-        )}
+        {activeTab === 'chat' && <ChatTab />}
 
         {/* TAB: FILES */}
         {activeTab === 'files' && (

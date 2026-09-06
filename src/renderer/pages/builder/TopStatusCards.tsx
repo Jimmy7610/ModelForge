@@ -4,7 +4,7 @@ import { useAppStore } from '@/store/AppStoreContext';
 import './TopStatusCards.css';
 
 export const TopStatusCards: React.FC = () => {
-  const { activeProject, hardwareInfo, models, setCurrentPage, addProject } = useAppStore();
+  const { activeProject, hardwareInfo, models, activeModel, inferenceState, setCurrentPage, addProject } = useAppStore();
 
   const handleProjectClick = () => {
     if (!activeProject) {
@@ -16,6 +16,7 @@ export const TopStatusCards: React.FC = () => {
 
   const gpuDisplay = hardwareInfo?.gpuName || 'GPU detection pending';
   const isGpuReady = hardwareInfo?.gpuStatus === 'detected';
+  const backendName = inferenceState?.runtime.backend?.toUpperCase() || 'CPU';
 
   return (
     <div className="top-status-cards">
@@ -43,11 +44,17 @@ export const TopStatusCards: React.FC = () => {
         <div className="status-card-body">
           <span className="status-card-label">Active Model</span>
           <div className="status-card-value-row">
-            <span className="status-card-value text-muted">No model loaded</span>
-            <span className={`status-dot ${models.length > 0 ? 'ready' : 'idle'}`} />
+            <span className={`status-card-value ${activeModel ? 'text-primary' : 'text-muted'}`}>
+              {activeModel ? activeModel.name : 'No model loaded'}
+            </span>
+            <span className={`status-dot ${activeModel ? 'ready' : models.length > 0 ? 'idle' : 'error'}`} />
           </div>
           <span className="status-card-sub">
-            {models.length > 0 ? `${models.length} available on disk` : 'No models discovered'}
+            {activeModel
+              ? `${activeModel.architecture} · ${activeModel.quantization}`
+              : models.length > 0
+              ? `${models.length} available on disk`
+              : 'No models discovered'}
           </span>
         </div>
       </div>
@@ -59,8 +66,12 @@ export const TopStatusCards: React.FC = () => {
         </div>
         <div className="status-card-body">
           <span className="status-card-label">Engine</span>
-          <span className="status-card-value">Built-in Core</span>
-          <span className="status-card-sub">Inference setup pending</span>
+          <span className="status-card-value font-mono">
+            Built-in: {backendName}
+          </span>
+          <span className="status-card-sub">
+            {inferenceState?.runtime.status === 'ready' ? 'Native Offline Core' : 'Initializing Core'}
+          </span>
         </div>
       </div>
 
@@ -102,8 +113,12 @@ export const TopStatusCards: React.FC = () => {
         </div>
         <div className="status-card-body">
           <span className="status-card-label">Context</span>
-          <span className="status-card-value font-mono">—</span>
-          <span className="status-card-sub">Awaiting model load</span>
+          <span className="status-card-value font-mono">
+            {activeModel ? `${activeModel.contextLength}` : '—'}
+          </span>
+          <span className="status-card-sub">
+            {activeModel ? 'Bounded safe context' : 'Awaiting model load'}
+          </span>
         </div>
       </div>
     </div>

@@ -4,24 +4,25 @@
 
 Model Forge is an independent desktop workstation designed to run open-weight AI models directly on your local hardware with zero external API dependencies, no cloud subscriptions, and strict workspace-jailed agent autonomy.
 
-*Note: This project is under active, modular development. Pass 2 establishes real local model discovery, multi-root library management, streaming GGUF binary inspection, and real drive storage telemetry.*
+*Note: This project is under active, modular development. Pass 3 delivers the built-in local inference engine (CUDA/Vulkan/CPU), single-model memory residency, and real-time streaming local chat.*
 
 ---
 
 ## 🎯 Key Architectural Goals
 
 - **100% Local-First**: Run entirely on your physical machine. No OpenAI, Anthropic, Gemini, Ollama, or LM Studio required.
-- **Built-in Inference Runtime**: Direct GGUF quantized model execution and memory management directly in the native process *(Inference core scheduled for Pass 3)*.
-- **Project-Aware Agents**: Autonomous agents that read, understand, plan, and modify code within designated workspaces.
+- **Built-in Inference Core**: Direct GGUF quantized model execution and memory management running natively inside the Electron Main process via prebuilt `node-llama-cpp` bindings.
+- **Hardware Acceleration**: Automatic GPU offloading detection supporting NVIDIA CUDA, Vulkan, Apple Metal, and high-performance CPU fallbacks.
+- **Interactive Streaming Chat**: Real-time token-by-token streaming, performance metrics (tokens/sec, TTFT), immediate cancellation (`AbortController`), and multi-turn conversational history.
+- **Project-Aware Agents**: Autonomous agents that read, understand, plan, and modify code within designated workspaces *(Scheduled for Pass 4)*.
 - **Jailed Autonomy (YOLO Mode)**: Strict security sandbox containing agent filesystem operations and terminal commands to the target project directory.
-- **Local Model Library**: Discover, profile, benchmark, and organize local GGUF weights across multiple directories.
-- **Multi-Model Workflows**: Route tasks across specialized local models (Architect, Coder, Reviewer, Tester).
+- **Local Model Library**: Discover, profile, inspect, and organize local GGUF weights across multiple directories.
 
 ---
 
 ## 🏗 Implementation Status
 
-| Feature Area | Status in Current Build (v0.2.0) |
+| Feature Area | Status in Current Build (v0.3.0) |
 |---|---|
 | **Desktop Chrome & Design System** | ✅ **Complete** — Frameless window, dark-first UI matching design mockup, "100% LOCAL" indicator, window controls. |
 | **Secure IPC & Sandbox** | ✅ **Complete** — Strict `contextIsolation`, `sandbox: true`, no `nodeIntegration`, typed preload API surface. |
@@ -30,18 +31,19 @@ Model Forge is an independent desktop workstation designed to run open-weight AI
 | **Streaming GGUF Header Inspector** | ✅ **Complete** — Chunked 64KB reads that inspect architecture, quantization, context lengths without loading multi-gigabyte models into RAM. |
 | **Persistent Model Registry & Cache** | ✅ **Complete** — Stable deterministic IDs, metadata caching, and timestamp-based invalidation. |
 | **Real Drive Storage Telemetry** | ✅ **Complete** — Native `fs.statfsSync` computing actual drive capacity and usage. |
-| **Hero Builder Interface** | ✅ **Complete** — Status cards, prompt composer, agent permissions visual, agent activity, and tabbed workspace. |
-| **Command Palette (`Ctrl+K`)** | ✅ **Complete** — Global keyboard navigation and command execution. |
-| **Local LLM Inference Engine** | ⏳ *Planned for Pass 3* — Built-in llama.cpp runtime and GGUF weight execution. |
-| **Autonomous Agent Execution** | ⏳ *Planned for Pass 3* — Jailed file reading, editing, and diff engine. |
-| **Model Lab Benchmarks** | ⏳ *Planned for Pass 4* — Automated SWE-bench, HumanEval, and token latency benchmarks. |
-| **Multi-Model Teams** | ⏳ *Planned for Pass 5* — Orchestration between specialized models. |
+| **Built-in Local Inference Engine** | ✅ **Complete** — In-process native `node-llama-cpp` runtime with zero runtime compiler/binary downloads (`build: "never"`, `skipDownload: true`). |
+| **Single-Model Memory Residency** | ✅ **Complete** — Strict 1-model RAM/VRAM residency with automatic unloading and bounded safe context allocation. |
+| **Streaming Local Chat** | ✅ **Complete** — Token-by-token streaming, TTFT/tok-per-sec metrics, AbortController cancellation, and multi-turn conversational memory. |
+| **Autonomous Agent Execution** | ⏳ *Planned for Pass 4* — Jailed file reading, editing, and diff engine. |
+| **Model Lab Benchmarks** | ⏳ *Planned for Pass 5* — Automated SWE-bench, HumanEval, and token latency benchmarks. |
+| **Multi-Model Teams** | ⏳ *Planned for Pass 6* — Orchestration between specialized models. |
 
 ---
 
 ## 💻 Tech Stack
 
 - **Desktop Framework**: [Electron](https://www.electronjs.org/) (Process Sandboxing & IPC Separation)
+- **Local Inference Engine**: [node-llama-cpp](https://node-llama-cpp.withcat.ai/) (Prebuilt native llama.cpp bindings with CUDA & Vulkan support)
 - **UI Engine**: [React 18](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
 - **Bundler & Dev Server**: [Vite](https://vitejs.dev/) + `vite-plugin-electron`
 - **Iconography**: [Lucide React](https://lucide.dev/)
@@ -56,7 +58,8 @@ Model Forge is an independent desktop workstation designed to run open-weight AI
 
 - **Node.js**: v20.x, v22.x, or v24.x+
 - **npm**: v10.x or v11.x+
-- **Operating System**: Windows 10/11 (macOS / Linux support modularly architected)
+- **Operating System**: Windows 10/11 (macOS / Linux modularly supported)
+- **Hardware Acceleration (Optional)**: NVIDIA GPU with CUDA drivers or Vulkan-compatible GPU
 
 ### Installation
 
@@ -78,16 +81,17 @@ npm run dev
 
 ### Running Tests
 
-Execute the automated test suite (36 unit tests):
+Execute the automated test suite (53 passing unit tests):
 
 ```bash
 npm test
 ```
 
-Run test suite in watch mode:
+Run the opt-in real hardware inference test with a local GGUF model:
 
 ```bash
-npx vitest
+# In PowerShell:
+$env:MODEL_FORGE_TEST_GGUF="C:\path\to\your\model.gguf"; npx vitest run tests/real-inference.test.ts
 ```
 
 ### Type Checking & Linting
@@ -114,10 +118,10 @@ npm run build
 
 Model Forge follows a strict defense-in-depth model:
 - The React renderer runs with `nodeIntegration: false`, `contextIsolation: true`, and `sandbox: true`.
-- Raw `ipcRenderer`, Node filesystem APIs, and child process execution are never exposed to the renderer window.
+- Raw `ipcRenderer`, Node filesystem APIs, child processes, and native binary bindings are never exposed to the renderer window.
 - Communication occurs strictly through the typed `window.modelForge` bridge defined in `src/preload/index.ts`.
-- All incoming IPC payloads are sanitized and validated against explicit schemas in `src/main/ipc.ts`.
-- No network calls or telemetry are performed during local model discovery or metadata parsing.
+- All incoming IPC payloads are sanitized and validated against explicit schemas in `src/main/ipc.ts` (e.g. prompt length capped at 16,000 characters).
+- Zero network calls: all model discovery, metadata inspection, and LLM inference occur 100% offline.
 
 ---
 

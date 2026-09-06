@@ -154,10 +154,19 @@ export function registerIpcHandlers(
   });
 
   ipcMain.handle(IPC_CHANNELS.ADD_PROJECT, async () => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Select Project Directory',
-      properties: ['openDirectory'],
-    });
+    const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    if (targetWindow) {
+      targetWindow.focus();
+    }
+    const result = targetWindow
+      ? await dialog.showOpenDialog(targetWindow, {
+          title: 'Select Project Directory',
+          properties: ['openDirectory', 'dontAddToRecent'],
+        })
+      : await dialog.showOpenDialog({
+          title: 'Select Project Directory',
+          properties: ['openDirectory', 'dontAddToRecent'],
+        });
 
     if (result.canceled || result.filePaths.length === 0) {
       return null;
@@ -196,10 +205,19 @@ export function registerIpcHandlers(
     if (typeof manualPath === 'string' && manualPath.trim()) {
       targetPath = path.resolve(manualPath.trim());
     } else {
-      const result = await dialog.showOpenDialog(mainWindow, {
-        title: 'Select Local Model Library Folder',
-        properties: ['openDirectory'],
-      });
+      const targetWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+      if (targetWindow) {
+        targetWindow.focus();
+      }
+      const result = targetWindow
+        ? await dialog.showOpenDialog(targetWindow, {
+            title: 'Select Local Model Library Folder',
+            properties: ['openDirectory', 'dontAddToRecent'],
+          })
+        : await dialog.showOpenDialog({
+            title: 'Select Local Model Library Folder',
+            properties: ['openDirectory', 'dontAddToRecent'],
+          });
 
       if (result.canceled || result.filePaths.length === 0) {
         return null;

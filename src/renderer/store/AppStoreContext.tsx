@@ -242,7 +242,13 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, []);
 
   const handleAddProject = useCallback(async (): Promise<Project | null> => {
-    if (typeof window !== 'undefined' && window.modelForge) {
+    if (typeof window === 'undefined' || !window.modelForge) {
+      console.error('[ModelForge] Electron API bridge (window.modelForge) is unavailable');
+      addToast('Desktop integration unavailable. Please restart Model Forge.', 'error');
+      return null;
+    }
+
+    try {
       const newProj = await window.modelForge.addProject();
       if (newProj) {
         setProjects((prev) => {
@@ -253,8 +259,13 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         addToast(`Project "${newProj.name}" added successfully`, 'success');
         return newProj;
       }
+      return null;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[ModelForge] Failed to add project:', err);
+      addToast(`Could not select project directory: ${msg}`, 'error');
+      return null;
     }
-    return null;
   }, [addToast]);
 
   const handleRemoveProject = useCallback(
@@ -272,23 +283,27 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   // Model Library Actions
   const handleAddModelLibrary = useCallback(
     async (dirPath?: string): Promise<string | null> => {
-      if (typeof window !== 'undefined' && window.modelForge) {
-        try {
-          setIsScanning(true);
-          const added = await window.modelForge.addModelLibrary(dirPath);
-          if (added) {
-            await refreshModelsAndLibraries();
-            addToast(`Added model library: ${added}`, 'success');
-            return added;
-          }
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          addToast(`Failed to add library: ${msg}`, 'error');
-        } finally {
-          setIsScanning(false);
-        }
+      if (typeof window === 'undefined' || !window.modelForge) {
+        console.error('[ModelForge] Electron API bridge (window.modelForge) is unavailable');
+        addToast('Desktop integration unavailable. Please restart Model Forge.', 'error');
+        return null;
       }
-      return null;
+
+      try {
+        const added = await window.modelForge.addModelLibrary(dirPath);
+        if (added) {
+          await refreshModelsAndLibraries();
+          addToast(`Added model library: ${added}`, 'success');
+          return added;
+        }
+        // User canceled dialog
+        return null;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[ModelForge] Failed to add library:', err);
+        addToast(`Could not open model folder picker: ${msg}`, 'error');
+        return null;
+      }
     },
     [addToast, refreshModelsAndLibraries]
   );

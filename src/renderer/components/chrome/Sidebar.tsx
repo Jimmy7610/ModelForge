@@ -165,6 +165,7 @@ export const Sidebar: React.FC = () => {
                     <button
                       className="btn-link-action"
                       onClick={() => addModelLibrary()}
+                      disabled={isScanning}
                     >
                       <FolderPlus size={11} />
                       <span>Add Model Folder</span>

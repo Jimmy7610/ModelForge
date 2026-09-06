@@ -1,5 +1,6 @@
 import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { registerIpcHandlers } from './ipc';
 import { PersistenceStore } from './store';
@@ -38,7 +39,9 @@ function createWindow(): void {
     backgroundColor: '#0a0d14',
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: fs.existsSync(path.join(__dirname, '../preload/index.cjs'))
+        ? path.join(__dirname, '../preload/index.cjs')
+        : path.join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,

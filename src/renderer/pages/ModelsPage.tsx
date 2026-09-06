@@ -218,7 +218,11 @@ export const ModelsPage: React.FC = () => {
               Add the folder containing your local GGUF models. Model Forge discovers, verifies,
               and inspects quantized weights directly on your hardware without third-party services.
             </p>
-            <button className="btn btn-primary" onClick={() => addModelLibrary()}>
+            <button
+              className="btn btn-primary"
+              onClick={() => addModelLibrary()}
+              disabled={isScanning}
+            >
               <FolderOpen size={14} />
               <span>Choose GGUF Folder</span>
             </button>

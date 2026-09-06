@@ -32,7 +32,9 @@ export interface HardwareInfo {
 export interface AppSettings {
   schemaVersion: number;
   startupPage: NavigationPage;
-  modelDirectory: string;
+  modelDirectories: string[];
+  /** Backwards compatibility alias for the first directory */
+  modelDirectory?: string;
   confirmDestructiveActions: boolean;
   compactMode: boolean;
 }
@@ -44,13 +46,59 @@ export interface Project {
   createdAt: string;
 }
 
-export interface LocalModelSummary {
+export interface DriveStorageInfo {
+  mountPath: string;
+  totalBytes: number;
+  freeBytes: number;
+  usedBytes: number;
+  usedPercentage: number;
+  formattedUsed: string;
+  formattedTotal: string;
+}
+
+export interface ModelMetadata {
+  name?: string;
+  architecture?: string;
+  basename?: string;
+  fileType?: number;
+  quantizationVersion?: number;
+  contextLength?: number;
+  tokenizerModel?: string;
+  rawKv?: Record<string, string | number | boolean>;
+}
+
+export interface ModelRecord {
   id: string;
-  name: string;
-  parameterSize: string;
-  status: 'ready' | 'idle' | 'available';
   path: string;
-  sizeBytes?: number;
+  fileName: string;
+  displayName: string;
+  rootDirectory: string;
+  sizeBytes: number;
+  modifiedAt: string;
+  mtimeMs: number;
+  ggufVersion: number | null;
+  architecture: string | null;
+  quantization: string | null;
+  quantizationSource: 'metadata' | 'filename' | null;
+  contextLength: number | null;
+  metadataStatus: 'available' | 'error';
+  metadataError?: string;
+  discoveredAt: string;
+}
+
+export interface ModelLibrary {
+  path: string;
+  modelCount: number;
+  lastScannedAt: string | null;
+  isScanning?: boolean;
+}
+
+export interface ModelScanProgress {
+  phase: 'started' | 'discovering' | 'inspecting' | 'completed' | 'failed';
+  totalFound?: number;
+  inspectedCount?: number;
+  currentFile?: string;
+  error?: string;
 }
 
 export interface ModelForgeAPI {
@@ -60,10 +108,22 @@ export interface ModelForgeAPI {
   getProjects: () => Promise<Project[]>;
   addProject: () => Promise<Project | null>;
   removeProject: (id: string) => Promise<boolean>;
-  selectModelFolder: () => Promise<string | null>;
+  
+  // Model Library Management
+  getModelLibraries: () => Promise<ModelLibrary[]>;
+  addModelLibrary: (dirPath?: string) => Promise<string | null>;
+  removeModelLibrary: (dirPath: string) => Promise<boolean>;
+  scanModelLibrary: (dirPath: string) => Promise<ModelRecord[]>;
+  scanAllModelLibraries: () => Promise<ModelRecord[]>;
+  getModels: () => Promise<ModelRecord[]>;
+  getModelDetails: (modelId: string) => Promise<ModelRecord | null>;
+  getPrimaryDriveStorage: () => Promise<DriveStorageInfo | null>;
+
+  // Window Controls
   windowControl: (action: 'minimize' | 'maximize' | 'close') => Promise<void>;
   isMaximized: () => Promise<boolean>;
   onWindowStateChange: (callback: (isMaximized: boolean) => void) => () => void;
+  onScanProgress?: (callback: (progress: ModelScanProgress) => void) => () => void;
 }
 
 declare global {

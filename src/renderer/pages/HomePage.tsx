@@ -13,7 +13,15 @@ import { useAppStore } from '@/store/AppStoreContext';
 import './HomePage.css';
 
 export const HomePage: React.FC = () => {
-  const { setCurrentPage, addProject, selectModelFolder, settings, activeProject, hardwareInfo } = useAppStore();
+  const {
+    setCurrentPage,
+    addProject,
+    addModelLibrary,
+    models,
+    modelLibraries,
+    activeProject,
+    hardwareInfo,
+  } = useAppStore();
 
   return (
     <div className="home-page">
@@ -25,8 +33,8 @@ export const HomePage: React.FC = () => {
           </div>
           <h1 className="home-hero-title">Welcome to Model Forge</h1>
           <p className="home-hero-desc">
-            A self-contained local AI development workstation. Run local GGUF models directly on your hardware
-            with zero external dependencies, no cloud subscriptions, and workspace-jailed agent autonomy.
+            A self-contained local AI development workstation. Discover and inspect local GGUF models directly on
+            your hardware with zero external dependencies, no cloud subscriptions, and workspace-jailed agent autonomy.
           </p>
           <div className="home-hero-actions">
             <button className="btn btn-primary" onClick={() => setCurrentPage('builder')}>
@@ -46,7 +54,7 @@ export const HomePage: React.FC = () => {
         <h2 className="home-section-title">Quick Start Workflow</h2>
         <div className="quick-start-grid">
           {/* Step 1 */}
-          <div className="quick-step-card" onClick={() => selectModelFolder()}>
+          <div className="quick-step-card" onClick={() => addModelLibrary()}>
             <div className="quick-step-number">1</div>
             <div className="quick-step-icon">
               <HardDrive size={18} />
@@ -54,8 +62,8 @@ export const HomePage: React.FC = () => {
             <div className="quick-step-body">
               <span className="quick-step-title">Add Model Folder</span>
               <p className="quick-step-desc">
-                {settings.modelDirectory
-                  ? `Configured: ${settings.modelDirectory}`
+                {modelLibraries.length > 0
+                  ? `${modelLibraries.length} folder(s) configured (${models.length} models)`
                   : 'Point to your local directory containing .gguf models.'}
               </p>
             </div>
@@ -86,9 +94,11 @@ export const HomePage: React.FC = () => {
               <Box size={18} />
             </div>
             <div className="quick-step-body">
-              <span className="quick-step-title">Load Model</span>
+              <span className="quick-step-title">Inspect Models</span>
               <p className="quick-step-desc">
-                Select your preferred GGUF model into the built-in inference runtime.
+                {models.length > 0
+                  ? `${models.length} local GGUF models available in library.`
+                  : 'Explore local GGUF models, context windows, and quantization.'}
               </p>
             </div>
             <ArrowRight size={14} className="quick-step-arrow" />
@@ -113,6 +123,41 @@ export const HomePage: React.FC = () => {
 
       {/* Dashboard Overview Cards */}
       <div className="home-dashboard-grid">
+        {/* Model Inventory Summary Card */}
+        <div className="panel home-summary-card">
+          <div className="panel-header">
+            <div className="panel-title">
+              <Box size={14} className="text-secondary" />
+              <span>Model Inventory</span>
+            </div>
+            <span className="badge badge-local">Local Only</span>
+          </div>
+          <div className="home-stats-list">
+            <div className="home-stat-row">
+              <span className="stat-name">Discovered Models</span>
+              <span className="stat-val font-mono font-semibold text-primary">
+                {models.length} available
+              </span>
+            </div>
+            <div className="home-stat-row">
+              <span className="stat-name">Configured Libraries</span>
+              <span className="stat-val font-mono">
+                {modelLibraries.length} {modelLibraries.length === 1 ? 'folder' : 'folders'}
+              </span>
+            </div>
+            <div className="home-stat-row">
+              <span className="stat-name">Inference Core</span>
+              <span className="stat-val font-mono text-muted">Awaiting installation</span>
+            </div>
+          </div>
+          <button
+            className="btn btn-secondary mt-2"
+            onClick={() => setCurrentPage('models')}
+          >
+            Open Model Library
+          </button>
+        </div>
+
         {/* System & Hardware Card */}
         <div className="panel home-summary-card">
           <div className="panel-header">
@@ -148,37 +193,6 @@ export const HomePage: React.FC = () => {
               </span>
             </div>
           </div>
-        </div>
-
-        {/* Workspace Card */}
-        <div className="panel home-summary-card">
-          <div className="panel-header">
-            <div className="panel-title">
-              <Folder size={14} className="text-secondary" />
-              <span>Active Project</span>
-            </div>
-          </div>
-          {activeProject ? (
-            <div className="active-proj-info">
-              <div className="proj-highlight-name">{activeProject.name}</div>
-              <div className="proj-highlight-path font-mono">{activeProject.path}</div>
-              <div className="proj-badge-row">
-                <span className="badge badge-local">Jailed Safe</span>
-                <span className="text-xs text-muted">Added {new Date(activeProject.createdAt).toLocaleDateString()}</span>
-              </div>
-              <button className="btn btn-secondary mt-2" onClick={() => setCurrentPage('projects')}>
-                Manage Projects
-              </button>
-            </div>
-          ) : (
-            <div className="empty-sub-panel">
-              <p className="text-muted text-sm">No project currently selected.</p>
-              <button className="btn btn-primary" onClick={() => addProject()}>
-                <FolderPlus size={13} />
-                <span>Add Project</span>
-              </button>
-            </div>
-          )}
         </div>
       </div>
     </div>

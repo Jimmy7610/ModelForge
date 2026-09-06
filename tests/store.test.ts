@@ -33,12 +33,12 @@ describe('PersistenceStore', () => {
   it('persists and updates partial settings', () => {
     const updated = store.updateSettings({
       startupPage: 'home',
-      modelDirectory: 'C:\\AI\\models',
+      modelDirectories: ['C:\\AI\\models'],
       compactMode: true,
     });
 
     expect(updated.startupPage).toBe('home');
-    expect(updated.modelDirectory).toBe('C:\\AI\\models');
+    expect(updated.modelDirectories).toEqual(['C:\\AI\\models']);
     expect(updated.compactMode).toBe(true);
     expect(updated.confirmDestructiveActions).toBe(true);
 
@@ -46,7 +46,7 @@ describe('PersistenceStore', () => {
     const freshStore = new PersistenceStore(tempDir);
     const reloaded = freshStore.getSettings();
     expect(reloaded.startupPage).toBe('home');
-    expect(reloaded.modelDirectory).toBe('C:\\AI\\models');
+    expect(reloaded.modelDirectories).toEqual(['C:\\AI\\models']);
     expect(reloaded.compactMode).toBe(true);
   });
 

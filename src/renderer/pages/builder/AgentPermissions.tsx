@@ -13,7 +13,7 @@ export const AgentPermissions: React.FC = () => {
     if (mode === 'READ') {
       setSelectedMode('READ');
     } else {
-      addToast(`${mode} mode is planned for Pass 2 (workspace jail active). Safe READ is active.`, 'info');
+      addToast(`${mode} mode requires runtime model execution. Safe READ is active.`, 'info');
     }
   };
 
@@ -42,11 +42,11 @@ export const AgentPermissions: React.FC = () => {
                     title={
                       isAvailable
                         ? 'Safe read-only inspection'
-                        : `${mode} mode: Jailed workspace editing coming in next pass`
+                        : `${mode} mode: Jailed workspace editing requires active model`
                     }
                   >
                     <span>{mode}</span>
-                    {!isAvailable && <span className="mode-badge-tag">Pass 2</span>}
+                    {!isAvailable && <span className="mode-badge-tag">Upcoming</span>}
                   </button>
                 );
               })}

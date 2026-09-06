@@ -21,6 +21,9 @@
 }
 
 .settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   border-bottom: 1px solid var(--border-subtle);
   padding-bottom: 10px;
 }
@@ -66,12 +69,6 @@
   color: var(--text-secondary);
 }
 
-.settings-value-preview {
-  font-size: 11px;
-  color: #60a5fa;
-  margin-top: 4px;
-}
-
 .settings-select {
   background-color: var(--bg-input);
   border: 1px solid var(--border-card);
@@ -84,6 +81,65 @@
 
 .settings-select:focus {
   border-color: var(--color-accent);
+}
+
+.settings-libraries-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-empty-notice {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border-subtle);
+}
+
+.settings-libraries-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-lib-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  gap: 12px;
+}
+
+.settings-lib-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-lib-path {
+  font-size: 11.5px;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-lib-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-safety-hint {
+  font-style: italic;
+  padding-top: 2px;
 }
 
 /* Modern Toggle Switch */

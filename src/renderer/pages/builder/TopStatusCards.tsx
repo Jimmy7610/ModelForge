@@ -4,7 +4,7 @@ import { useAppStore } from '@/store/AppStoreContext';
 import './TopStatusCards.css';
 
 export const TopStatusCards: React.FC = () => {
-  const { activeProject, hardwareInfo, setCurrentPage, addProject } = useAppStore();
+  const { activeProject, hardwareInfo, models, setCurrentPage, addProject } = useAppStore();
 
   const handleProjectClick = () => {
     if (!activeProject) {
@@ -36,7 +36,7 @@ export const TopStatusCards: React.FC = () => {
       </div>
 
       {/* 2. Active Model */}
-      <div className="status-card clickable" onClick={() => setCurrentPage('models')} title="Click to view local models">
+      <div className="status-card clickable" onClick={() => setCurrentPage('models')} title="Click to view local model library">
         <div className="status-card-icon">
           <Box size={18} />
         </div>
@@ -44,9 +44,11 @@ export const TopStatusCards: React.FC = () => {
           <span className="status-card-label">Active Model</span>
           <div className="status-card-value-row">
             <span className="status-card-value text-muted">No model loaded</span>
-            <span className="status-dot idle" />
+            <span className={`status-dot ${models.length > 0 ? 'ready' : 'idle'}`} />
           </div>
-          <span className="status-card-sub">Core setup pending</span>
+          <span className="status-card-sub">
+            {models.length > 0 ? `${models.length} available on disk` : 'No models discovered'}
+          </span>
         </div>
       </div>
 
@@ -58,7 +60,7 @@ export const TopStatusCards: React.FC = () => {
         <div className="status-card-body">
           <span className="status-card-label">Engine</span>
           <span className="status-card-value">Built-in Core</span>
-          <span className="status-card-sub">Local llama-core</span>
+          <span className="status-card-sub">Inference setup pending</span>
         </div>
       </div>
 

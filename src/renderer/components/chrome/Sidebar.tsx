@@ -12,6 +12,8 @@ import {
   RotateCw,
   HardDrive,
   LucideIcon,
+  ChevronRight,
+  FolderPlus,
 } from 'lucide-react';
 import { useAppStore } from '@/store/AppStoreContext';
 import { NavigationPage } from '@shared/types';
@@ -36,15 +38,27 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export const Sidebar: React.FC = () => {
-  const { currentPage, setCurrentPage, settings, selectModelFolder, addToast } = useAppStore();
+  const {
+    currentPage,
+    setCurrentPage,
+    models,
+    modelLibraries,
+    primaryDriveStorage,
+    isScanning,
+    scanAllModelLibraries,
+    addModelLibrary,
+    setSelectedModelId,
+  } = useAppStore();
 
-  const handleRefreshModels = () => {
-    if (!settings.modelDirectory) {
-      addToast('No model directory set. Open Models page to add one.', 'info');
+  const handleRefreshModels = async () => {
+    if (modelLibraries.length === 0) {
+      await addModelLibrary();
     } else {
-      addToast('Model scan complete: GGUF runtime ready.', 'info');
+      await scanAllModelLibraries();
     }
   };
+
+  const previewModels = models.slice(0, 4);
 
   return (
     <aside className="sidebar">
@@ -68,59 +82,124 @@ export const Sidebar: React.FC = () => {
         })}
       </nav>
 
-      {/* Sidebar Footer: Local Models & Local Storage */}
+      {/* Sidebar Footer: Real Local Models & Real Local Storage */}
       <div className="sidebar-footer">
         {/* Local Models Header */}
         <div className="sidebar-section">
           <div className="sidebar-section-header">
-            <span className="sidebar-section-title">LOCAL MODELS (0)</span>
+            <span className="sidebar-section-title">
+              LOCAL MODELS ({models.length})
+            </span>
             <button
-              className="icon-action-btn"
+              className={`icon-action-btn ${isScanning ? 'spinning' : ''}`}
               onClick={handleRefreshModels}
-              title="Refresh local model directory"
-              aria-label="Refresh local model directory"
+              title={modelLibraries.length > 0 ? 'Rescan all local model directories' : 'Add model library folder'}
+              aria-label="Refresh local model directories"
+              disabled={isScanning}
             >
               <RotateCw size={12} />
             </button>
           </div>
 
-          <div className="models-empty-box">
-            {settings.modelDirectory ? (
-              <div className="model-dir-info">
-                <span className="dir-label">Directory:</span>
-                <span className="dir-path" title={settings.modelDirectory}>
-                  {settings.modelDirectory}
-                </span>
-                <span className="dir-status">No .gguf models loaded</span>
+          <div className="sidebar-models-container">
+            {models.length > 0 ? (
+              <div className="sidebar-models-list">
+                {previewModels.map((m) => (
+                  <div
+                    key={m.id}
+                    className="sidebar-model-item"
+                    onClick={() => {
+                      setSelectedModelId(m.id);
+                      setCurrentPage('models');
+                    }}
+                    title={`${m.displayName}\nLocation: ${m.path}`}
+                  >
+                    <div className="sidebar-model-top">
+                      <span className="sidebar-model-name">{m.displayName}</span>
+                      <span
+                        className={`status-dot ${m.metadataStatus === 'available' ? 'ready' : 'idle'}`}
+                      />
+                    </div>
+                    <div className="sidebar-model-sub">
+                      <span>{m.quantization || (m.metadataStatus === 'error' ? 'Metadata error' : 'Available')}</span>
+                      {m.contextLength && <span>· {Math.round(m.contextLength / 1024)}K</span>}
+                    </div>
+                  </div>
+                ))}
+
+                {models.length > previewModels.length && (
+                  <button
+                    className="sidebar-view-all-btn"
+                    onClick={() => setCurrentPage('models')}
+                  >
+                    <span>View all {models.length} models</span>
+                    <ChevronRight size={12} />
+                  </button>
+                )}
               </div>
             ) : (
-              <div className="no-dir-info">
-                <span>No models found</span>
-                <button
-                  className="btn-link-action"
-                  onClick={() => selectModelFolder()}
-                >
-                  + Add Folder
-                </button>
+              <div className="models-empty-box">
+                {modelLibraries.length > 0 ? (
+                  <div className="model-dir-info">
+                    <span className="dir-label">Configured Roots: {modelLibraries.length}</span>
+                    <span className="dir-status">No .gguf models found yet</span>
+                    <button
+                      className="btn-link-action"
+                      onClick={() => scanAllModelLibraries()}
+                      disabled={isScanning}
+                    >
+                      {isScanning ? 'Scanning...' : 'Rescan Folders'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="no-dir-info">
+                    <span>No model library added</span>
+                    <button
+                      className="btn-link-action"
+                      onClick={() => addModelLibrary()}
+                    >
+                      <FolderPlus size={11} />
+                      <span>Add Model Folder</span>
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
 
-        {/* Local Storage Meter */}
+        {/* Real Local Storage Meter */}
         <div className="storage-card">
           <div className="storage-header">
             <span className="storage-title">
               <HardDrive size={11} className="storage-icon" /> LOCAL STORAGE
             </span>
-            <span className="storage-percentage">71%</span>
+            {primaryDriveStorage && (
+              <span className="storage-percentage font-mono">
+                {primaryDriveStorage.usedPercentage}%
+              </span>
+            )}
           </div>
-          <div className="storage-track">
-            <div className="storage-fill" style={{ width: '71%' }} />
-          </div>
-          <div className="storage-footer">
-            <span>1.42 TB / 2.00 TB</span>
-          </div>
+
+          {primaryDriveStorage ? (
+            <>
+              <div className="storage-track">
+                <div
+                  className="storage-fill"
+                  style={{ width: `${Math.min(100, primaryDriveStorage.usedPercentage)}%` }}
+                />
+              </div>
+              <div className="storage-footer font-mono">
+                <span>
+                  {primaryDriveStorage.formattedUsed} / {primaryDriveStorage.formattedTotal}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="storage-empty-state">
+              <span>{modelLibraries.length > 0 ? 'Reading drive metrics...' : 'No library folders configured'}</span>
+            </div>
+          )}
         </div>
       </div>
     </aside>

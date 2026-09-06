@@ -7,9 +7,9 @@ describe('IPC Payload and Schema Validation Helpers', () => {
 
   it('validates correct AppSettings structures', () => {
     const valid: AppSettings = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       startupPage: 'builder',
-      modelDirectory: 'C:\\Models',
+      modelDirectories: ['C:\\Models'],
       confirmDestructiveActions: true,
       compactMode: false,
     };
@@ -22,9 +22,9 @@ describe('IPC Payload and Schema Validation Helpers', () => {
     expect(dummyStore.isValidSettings({})).toBe(false);
     expect(
       dummyStore.isValidSettings({
-        schemaVersion: 1,
+        schemaVersion: 2,
         startupPage: 'unknown-route',
-        modelDirectory: '',
+        modelDirectories: [],
         confirmDestructiveActions: true,
         compactMode: false,
       })
@@ -34,7 +34,7 @@ describe('IPC Payload and Schema Validation Helpers', () => {
       dummyStore.isValidSettings({
         schemaVersion: -1,
         startupPage: 'builder',
-        modelDirectory: '',
+        modelDirectories: [],
         confirmDestructiveActions: true,
         compactMode: false,
       })

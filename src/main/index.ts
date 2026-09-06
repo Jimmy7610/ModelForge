@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerIpcHandlers } from './ipc';
 import { PersistenceStore } from './store';
+import { ModelRegistry } from './models/registry';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,6 +20,7 @@ let mainWindow: BrowserWindow | null = null;
 
 function createWindow(): void {
   const store = new PersistenceStore(app.getPath('userData'));
+  const registry = new ModelRegistry(app.getPath('userData'));
 
   mainWindow = new BrowserWindow({
     title: 'Model Forge',
@@ -32,7 +34,7 @@ function createWindow(): void {
     show: false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -47,7 +49,7 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
-  registerIpcHandlers(mainWindow, store);
+  registerIpcHandlers(mainWindow, store, registry);
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);

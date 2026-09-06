@@ -5,7 +5,9 @@ import {
   Shield,
   Palette,
   Terminal,
-  FolderOpen,
+  Trash2,
+  RefreshCw,
+  FolderPlus,
 } from 'lucide-react';
 import { useAppStore } from '@/store/AppStoreContext';
 import { NavigationPage } from '@shared/types';
@@ -13,7 +15,17 @@ import { APP_VERSION } from '@shared/constants';
 import './SettingsPage.css';
 
 export const SettingsPage: React.FC = () => {
-  const { settings, updateSettings, selectModelFolder, hardwareInfo, addToast } = useAppStore();
+  const {
+    settings,
+    updateSettings,
+    modelLibraries,
+    addModelLibrary,
+    removeModelLibrary,
+    scanModelLibrary,
+    isScanning,
+    hardwareInfo,
+    addToast,
+  } = useAppStore();
 
   const handleStartupPageChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const page = e.target.value as NavigationPage;
@@ -72,29 +84,66 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Section 2: Models */}
+        {/* Section 2: Models & Multi-Root Storage */}
         <div className="panel settings-section-card">
           <div className="settings-section-header">
             <div className="settings-section-title">
               <HardDrive size={16} className="text-secondary" />
-              <span>Models & Storage</span>
+              <span>Model Library Directories</span>
             </div>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => addModelLibrary()}
+              disabled={isScanning}
+            >
+              <FolderPlus size={13} />
+              <span>Add Folder</span>
+            </button>
           </div>
           <div className="settings-group">
-            <div className="settings-row">
-              <div className="settings-text">
-                <span className="settings-label">Local Model Directory</span>
-                <span className="settings-sub">
-                  Directory where your local GGUF models are stored on disk.
-                </span>
-                <span className="settings-value-preview font-mono">
-                  {settings.modelDirectory || 'No directory configured'}
-                </span>
+            <div className="settings-libraries-container">
+              {modelLibraries.length === 0 ? (
+                <div className="settings-empty-notice">
+                  <span>No model folders configured. Add a directory containing .gguf models.</span>
+                </div>
+              ) : (
+                <div className="settings-libraries-list">
+                  {modelLibraries.map((lib) => (
+                    <div key={lib.path} className="settings-lib-item">
+                      <div className="settings-lib-info">
+                        <span className="settings-lib-path font-mono" title={lib.path}>
+                          {lib.path}
+                        </span>
+                        <span className="settings-lib-count text-muted text-xs">
+                          {lib.modelCount} models discovered
+                        </span>
+                      </div>
+                      <div className="settings-lib-actions">
+                        <button
+                          className="btn btn-secondary btn-xs"
+                          onClick={() => scanModelLibrary(lib.path)}
+                          disabled={isScanning}
+                          title="Rescan folder"
+                        >
+                          <RefreshCw size={11} className={isScanning ? 'spinning' : ''} />
+                          <span>Rescan</span>
+                        </button>
+                        <button
+                          className="btn-delete-root"
+                          onClick={() => removeModelLibrary(lib.path)}
+                          disabled={isScanning}
+                          title="Remove from Model Forge (keeps files on disk)"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="settings-safety-hint text-xs text-muted">
+                Note: Removing a folder root only unregisters it from Model Forge. Model files on disk are never deleted or modified.
               </div>
-              <button className="btn btn-secondary" onClick={() => selectModelFolder()}>
-                <FolderOpen size={13} />
-                <span>Browse Directory</span>
-              </button>
             </div>
           </div>
         </div>
@@ -129,7 +178,7 @@ export const SettingsPage: React.FC = () => {
               <div className="settings-text">
                 <span className="settings-label">Workspace Jail Restrictions</span>
                 <span className="settings-sub">
-                  All autonomous agent tasks are strictly sandboxed to the project directory.
+                  All autonomous agent tasks are strictly sandboxed to the active project directory.
                 </span>
               </div>
               <span className="badge badge-local">Always Enforced</span>
@@ -149,7 +198,9 @@ export const SettingsPage: React.FC = () => {
             <div className="settings-row">
               <div className="settings-text">
                 <span className="settings-label">Color Theme</span>
-                <span className="settings-sub">Model Forge is optimized for focused dark-mode developer environments.</span>
+                <span className="settings-sub">
+                  Model Forge is optimized for focused dark-mode developer environments.
+                </span>
               </div>
               <span className="badge badge-accent">Forge Dark (Default)</span>
             </div>
@@ -157,7 +208,9 @@ export const SettingsPage: React.FC = () => {
             <div className="settings-row">
               <div className="settings-text">
                 <span className="settings-label">Compact Density</span>
-                <span className="settings-sub">Reduce sidebar width and padding for smaller screen sizes.</span>
+                <span className="settings-sub">
+                  Reduce sidebar width and padding for smaller screen sizes.
+                </span>
               </div>
               <label className="toggle-switch">
                 <input
@@ -183,16 +236,18 @@ export const SettingsPage: React.FC = () => {
             <div className="settings-row">
               <div className="settings-text">
                 <span className="settings-label">Model Forge Core Version</span>
-                <span className="settings-sub font-mono">v{APP_VERSION} (Pass 1 Foundation)</span>
+                <span className="settings-sub font-mono">v{APP_VERSION}</span>
               </div>
-              <span className="badge badge-local">Build 2026.1</span>
+              <span className="badge badge-local">Local Workstation</span>
             </div>
 
             <div className="settings-row">
               <div className="settings-text">
                 <span className="settings-label">Detected Hardware Target</span>
                 <span className="settings-sub font-mono">
-                  {hardwareInfo ? `${hardwareInfo.cpuModel} (${hardwareInfo.cpuCores} cores) · ${hardwareInfo.totalMemoryGB} GB RAM` : 'Detecting...'}
+                  {hardwareInfo
+                    ? `${hardwareInfo.cpuModel} (${hardwareInfo.cpuCores} cores) · ${hardwareInfo.totalMemoryGB} GB RAM`
+                    : 'Detecting...'}
                 </span>
                 <span className="settings-sub font-mono text-accent">
                   GPU: {hardwareInfo?.gpuName || 'GPU detection pending'}

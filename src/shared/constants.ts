@@ -1,12 +1,12 @@
 import { AppSettings } from './types';
 
-export const APP_VERSION = '0.1.0';
-export const SCHEMA_VERSION = 1;
+export const APP_VERSION = '0.2.0';
+export const SCHEMA_VERSION = 2;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   schemaVersion: SCHEMA_VERSION,
   startupPage: 'builder',
-  modelDirectory: '',
+  modelDirectories: [],
   confirmDestructiveActions: true,
   compactMode: false,
 };
@@ -18,7 +18,19 @@ export const IPC_CHANNELS = {
   GET_PROJECTS: 'modelforge:get-projects',
   ADD_PROJECT: 'modelforge:add-project',
   REMOVE_PROJECT: 'modelforge:remove-project',
-  SELECT_MODEL_FOLDER: 'modelforge:select-model-folder',
+  
+  // Model Discovery & Library
+  GET_MODEL_LIBRARIES: 'modelforge:get-model-libraries',
+  ADD_MODEL_LIBRARY: 'modelforge:add-model-library',
+  REMOVE_MODEL_LIBRARY: 'modelforge:remove-model-library',
+  SCAN_MODEL_LIBRARY: 'modelforge:scan-model-library',
+  SCAN_ALL_MODEL_LIBRARIES: 'modelforge:scan-all-model-libraries',
+  GET_MODELS: 'modelforge:get-models',
+  GET_MODEL_DETAILS: 'modelforge:get-model-details',
+  GET_PRIMARY_DRIVE_STORAGE: 'modelforge:get-primary-drive-storage',
+  MODEL_SCAN_PROGRESS: 'modelforge:model-scan-progress',
+
+  // Window Controls
   WINDOW_CONTROL: 'modelforge:window-control',
   IS_MAXIMIZED: 'modelforge:is-maximized',
   WINDOW_STATE_CHANGED: 'modelforge:window-state-changed',

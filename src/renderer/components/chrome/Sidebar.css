@@ -74,15 +74,15 @@
 .sidebar-footer {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding-top: 12px;
+  gap: 12px;
+  padding-top: 10px;
   border-top: 1px solid var(--border-subtle);
 }
 
 .sidebar-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .sidebar-section-header {
@@ -118,6 +118,87 @@
   background: rgba(255, 255, 255, 0.05);
 }
 
+.icon-action-btn.spinning svg {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.sidebar-models-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-model-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.sidebar-model-item:hover {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.sidebar-model-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.sidebar-model-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-model-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.sidebar-view-all-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  border: none;
+  color: var(--color-accent-light);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 6px;
+  margin-top: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.sidebar-view-all-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  text-decoration: underline;
+}
+
 .models-empty-box {
   background: rgba(0, 0, 0, 0.25);
   border: 1px dashed var(--border-subtle);
@@ -129,11 +210,14 @@
 .no-dir-info {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   color: var(--text-muted);
 }
 
 .btn-link-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: transparent;
   border: none;
   color: var(--color-accent-light);
@@ -151,22 +235,14 @@
 .model-dir-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .dir-label {
   font-size: 9px;
   color: var(--text-muted);
   text-transform: uppercase;
-}
-
-.dir-path {
-  font-size: 10px;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  letter-spacing: 0.04em;
 }
 
 .dir-status {
@@ -179,7 +255,7 @@
   background: rgba(0, 0, 0, 0.25);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  padding: 10px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -207,7 +283,6 @@
 
 .storage-percentage {
   color: var(--text-secondary);
-  font-family: var(--font-mono);
 }
 
 .storage-track {
@@ -227,7 +302,13 @@
 .storage-footer {
   display: flex;
   justify-content: space-between;
-  font-size: 10px;
+  font-size: 9.5px;
   color: var(--text-muted);
-  font-family: var(--font-mono);
+}
+
+.storage-empty-state {
+  font-size: 9.5px;
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 2px 0;
 }

@@ -32,7 +32,7 @@ export const CommandPalette: React.FC = () => {
     setCommandPaletteOpen,
     setCurrentPage,
     addProject,
-    selectModelFolder,
+    addModelLibrary,
   } = useAppStore();
 
   const [search, setSearch] = useState('');
@@ -126,7 +126,7 @@ export const CommandPalette: React.FC = () => {
       description: 'Set directory for local GGUF models',
       category: 'Actions',
       icon: HardDrive,
-      action: () => selectModelFolder(),
+      action: () => addModelLibrary(),
     },
   ];
 

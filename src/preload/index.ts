@@ -1,5 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { AppSettings, HardwareInfo, ModelForgeAPI, Project } from '../shared/types';
+import {
+  AppSettings,
+  DriveStorageInfo,
+  HardwareInfo,
+  ModelForgeAPI,
+  ModelLibrary,
+  ModelRecord,
+  ModelScanProgress,
+  Project,
+} from '../shared/types';
 import { IPC_CHANNELS } from '../shared/constants';
 
 const api: ModelForgeAPI = {
@@ -27,10 +36,40 @@ const api: ModelForgeAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.REMOVE_PROJECT, id);
   },
 
-  selectModelFolder: (): Promise<string | null> => {
-    return ipcRenderer.invoke(IPC_CHANNELS.SELECT_MODEL_FOLDER);
+  // Model Library Management
+  getModelLibraries: (): Promise<ModelLibrary[]> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_MODEL_LIBRARIES);
   },
 
+  addModelLibrary: (dirPath?: string): Promise<string | null> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.ADD_MODEL_LIBRARY, dirPath);
+  },
+
+  removeModelLibrary: (dirPath: string): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.REMOVE_MODEL_LIBRARY, dirPath);
+  },
+
+  scanModelLibrary: (dirPath: string): Promise<ModelRecord[]> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCAN_MODEL_LIBRARY, dirPath);
+  },
+
+  scanAllModelLibraries: (): Promise<ModelRecord[]> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCAN_ALL_MODEL_LIBRARIES);
+  },
+
+  getModels: (): Promise<ModelRecord[]> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_MODELS);
+  },
+
+  getModelDetails: (modelId: string): Promise<ModelRecord | null> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_MODEL_DETAILS, modelId);
+  },
+
+  getPrimaryDriveStorage: (): Promise<DriveStorageInfo | null> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_PRIMARY_DRIVE_STORAGE);
+  },
+
+  // Window Controls
   windowControl: (action: 'minimize' | 'maximize' | 'close'): Promise<void> => {
     return ipcRenderer.invoke(IPC_CHANNELS.WINDOW_CONTROL, action);
   },
@@ -46,6 +85,16 @@ const api: ModelForgeAPI = {
     ipcRenderer.on(IPC_CHANNELS.WINDOW_STATE_CHANGED, handler);
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.WINDOW_STATE_CHANGED, handler);
+    };
+  },
+
+  onScanProgress: (callback: (progress: ModelScanProgress) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: ModelScanProgress) => {
+      callback(progress);
+    };
+    ipcRenderer.on(IPC_CHANNELS.MODEL_SCAN_PROGRESS, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.MODEL_SCAN_PROGRESS, handler);
     };
   },
 };

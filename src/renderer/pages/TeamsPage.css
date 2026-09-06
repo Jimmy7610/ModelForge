@@ -1,0 +1,99 @@
+.teams-page {
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  gap: 16px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.teams-hero-banner {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(18, 23, 36, 0.6) 100%);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  padding: 20px;
+}
+
+.teams-hero-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+}
+
+.teams-hero-text h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 6px;
+}
+
+.teams-hero-text p {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.team-roles-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .team-roles-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.role-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.role-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.role-icon-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  color: #a855f7;
+}
+
+.role-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.role-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.role-model-hint {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: rgba(0, 0, 0, 0.25);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  margin-top: auto;
+}

@@ -1,0 +1,236 @@
+.workspace-tabs-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 240px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  padding: 0;
+  overflow: hidden;
+  margin-top: 12px;
+}
+
+.tabs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  background-color: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--border-subtle);
+  height: 38px;
+}
+
+.tabs-list {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 100%;
+}
+
+.tab-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.12s ease;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+}
+
+.tab-btn.active {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.tab-active-indicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: #3b82f6;
+  box-shadow: 0 0 8px #3b82f6;
+}
+
+.tabs-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon-btn-ghost {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.icon-btn-ghost:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-content-viewport {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.tab-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 160px;
+  text-align: center;
+  gap: 6px;
+}
+
+.tab-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tab-empty-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 420px;
+}
+
+/* Diff View Layout */
+.diff-view-container {
+  display: flex;
+  gap: 16px;
+}
+
+.diff-summary-card {
+  width: 220px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.diff-stat-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diff-file-count {
+  font-size: 13px;
+  color: #ffffff;
+}
+
+.diff-stats {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.diff-stat-spacer {
+  margin: 0 4px;
+}
+
+.diff-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.diff-files-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.diff-table-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 8px 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.diff-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+}
+
+.diff-file-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-badge-ts {
+  background-color: rgba(49, 120, 198, 0.25);
+  color: #60a5fa;
+  border: 1px solid rgba(49, 120, 198, 0.4);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.diff-file-name {
+  color: #f1f5f9;
+}
+
+.diff-file-metrics {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+}
+
+.diff-bar-preview {
+  width: 140px;
+  height: 6px;
+  display: flex;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.diff-bar-add {
+  background-color: var(--color-success);
+}
+
+.diff-bar-del {
+  background-color: var(--color-danger);
+}
+
+.diff-more-files {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-style: italic;
+}

@@ -1,0 +1,37 @@
+.builder-page {
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  gap: 4px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.builder-middle-row {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 12px;
+  align-items: stretch;
+}
+
+@media (max-width: 1200px) {
+  .builder-middle-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.builder-left-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.builder-right-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.builder-bottom-row {
+  display: flex;
+  flex-direction: column;
+}

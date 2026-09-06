@@ -1,0 +1,138 @@
+.models-page {
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  gap: 16px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.page-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.page-subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.page-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.model-dir-panel {
+  background-color: var(--bg-card);
+}
+
+.dir-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.dir-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background-color: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.dir-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dir-title {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dir-path-text {
+  font-size: 12px;
+  color: #60a5fa;
+}
+
+.dir-path-placeholder {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.models-library-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 360px;
+  justify-content: center;
+  align-items: center;
+}
+
+.models-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  max-width: 480px;
+  padding: 30px 20px;
+  gap: 12px;
+}
+
+.models-empty-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  margin-bottom: 4px;
+}
+
+.empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.empty-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.empty-action-group {
+  margin-top: 4px;
+}
+
+.models-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}

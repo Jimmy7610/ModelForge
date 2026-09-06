@@ -171,7 +171,17 @@ export interface ChatMessage {
   isStreaming?: boolean;
 }
 
+export interface BridgeInfo {
+  available: boolean;
+  version: string;
+  preloadFormat: 'cjs';
+  platform: string;
+}
+
 export interface ModelForgeAPI {
+  // Diagnostics & Bridge Health
+  getBridgeInfo: () => BridgeInfo;
+
   getHardwareInfo: () => Promise<HardwareInfo>;
   getSettings: () => Promise<AppSettings>;
   updateSettings: (partial: Partial<AppSettings>) => Promise<AppSettings>;

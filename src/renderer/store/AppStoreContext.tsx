@@ -132,7 +132,18 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   // Initialize from electron bridge
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.modelForge) {
+    if (typeof window === 'undefined' || !window.modelForge) {
+      console.error('[ModelForge] FATAL: window.modelForge is undefined in renderer.');
+      addToast('Desktop integration unavailable. Please restart Model Forge.', 'error');
+      return;
+    }
+
+    if (window.modelForge.getBridgeInfo) {
+      const info = window.modelForge.getBridgeInfo();
+      console.info(`[ModelForge] Bridge health verified: v${info.version} (format: ${info.preloadFormat}, platform: ${info.platform})`);
+    }
+
+    if (window.modelForge) {
       window.modelForge
         .getSettings()
         .then((loadedSettings) => {

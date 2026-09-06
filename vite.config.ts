@@ -11,7 +11,8 @@ export default defineConfig({
       {
         entry: 'src/main/index.ts',
         onstart(options) {
-          options.startup();
+          const argv = process.env.ELECTRON_ARGS ? process.env.ELECTRON_ARGS.split(' ') : undefined;
+          options.startup(argv);
         },
         vite: {
           build: {
@@ -24,7 +25,6 @@ export default defineConfig({
         },
       },
       {
-        entry: 'src/preload/index.ts',
         onstart(options) {
           options.reload();
         },
@@ -36,6 +36,7 @@ export default defineConfig({
               fileName: () => '[name].cjs',
             },
             outDir: 'dist-electron/preload',
+            emptyOutDir: true,
             minify: false,
             rollupOptions: {
               external: ['electron'],

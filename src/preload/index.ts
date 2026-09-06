@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   AppSettings,
+  BridgeInfo,
   DriveStorageInfo,
   HardwareInfo,
   ModelForgeAPI,
@@ -9,9 +10,18 @@ import {
   ModelScanProgress,
   Project,
 } from '../shared/types';
-import { IPC_CHANNELS } from '../shared/constants';
+import { APP_VERSION, IPC_CHANNELS } from '../shared/constants';
 
 const api: ModelForgeAPI = {
+  getBridgeInfo: (): BridgeInfo => {
+    return {
+      available: true,
+      version: APP_VERSION,
+      preloadFormat: 'cjs',
+      platform: process.platform,
+    };
+  },
+
   getHardwareInfo: (): Promise<HardwareInfo> => {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_HARDWARE_INFO);
   },

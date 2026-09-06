@@ -22,7 +22,36 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
 let mainWindow: BrowserWindow | null = null;
 let activeInferenceService: InferenceService | null = null;
 
-function createWindow(): void {
+async function resolveCanonicalPreload(): Promise<string> {
+  const canonicalPreload = path.join(__dirname, '../preload/index.cjs');
+  const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
+
+  console.info(`[ModelForge Main] Model Forge v${app.getVersion?.() || '0.3.2'} | Electron v${process.versions.electron} | Node v${process.versions.node}`);
+  console.info(`[ModelForge Main] Canonical preload path: ${canonicalPreload}`);
+
+  // In development, wait up to 3000ms for preload compilation if main process started slightly earlier
+  if (isDev && !fs.existsSync(canonicalPreload)) {
+    console.info('[ModelForge Main] Dev startup: waiting for preload compilation...');
+    const start = Date.now();
+    while (!fs.existsSync(canonicalPreload) && Date.now() - start < 3000) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  if (!fs.existsSync(canonicalPreload)) {
+    const errorMsg = `[ModelForge Main] FATAL: Sandboxed preload bundle not found at: ${canonicalPreload}`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  }
+
+  const stat = fs.statSync(canonicalPreload);
+  console.info(`[ModelForge Main] Preload verified on disk: ${canonicalPreload} (${stat.size} bytes)`);
+  return canonicalPreload;
+}
+
+async function createWindow(): Promise<void> {
+  const preloadPath = await resolveCanonicalPreload();
+
   const store = new PersistenceStore(app.getPath('userData'));
   const registry = new ModelRegistry(app.getPath('userData'));
   const inferenceService = new InferenceService(registry);
@@ -39,9 +68,7 @@ function createWindow(): void {
     backgroundColor: '#0a0d14',
     show: false,
     webPreferences: {
-      preload: fs.existsSync(path.join(__dirname, '../preload/index.cjs'))
-        ? path.join(__dirname, '../preload/index.cjs')
-        : path.join(__dirname, '../preload/index.js'),
+      preload: preloadPath,
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,

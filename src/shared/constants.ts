@@ -1,6 +1,6 @@
 import { AppSettings } from './types';
 
-export const APP_VERSION = '0.4.1';
+export const APP_VERSION = '0.5.0';
 export const SCHEMA_VERSION = 2;
 
 export const MAX_PROMPT_CHARS = 16000;
@@ -53,6 +53,19 @@ export const IPC_CHANNELS = {
   AGENT_CHUNK: 'modelforge:agent-chunk',
   AGENT_STATE_CHANGED: 'modelforge:agent-state-changed',
   CHECK_TOOL_CAPABILITY: 'modelforge:check-tool-capability',
+
+  // Edit Agent & Checkpoints (Pass 5)
+  RUN_EDIT_AGENT: 'modelforge:run-edit-agent',
+  STOP_EDIT_AGENT: 'modelforge:stop-edit-agent',
+  GET_EDIT_AGENT_STATE: 'modelforge:get-edit-agent-state',
+  EDIT_AGENT_ACTIVITY: 'modelforge:edit-agent-activity',
+  EDIT_AGENT_CHUNK: 'modelforge:edit-agent-chunk',
+  EDIT_AGENT_STATE_CHANGED: 'modelforge:edit-agent-state-changed',
+  GET_PENDING_CHECKPOINT: 'modelforge:get-pending-checkpoint',
+  GET_CHECKPOINT_DIFF: 'modelforge:get-checkpoint-diff',
+  ACCEPT_CHECKPOINT: 'modelforge:accept-checkpoint',
+  ROLLBACK_CHECKPOINT: 'modelforge:rollback-checkpoint',
+  CREATE_MANUAL_CHECKPOINT: 'modelforge:create-manual-checkpoint',
 
   // Read-Only Workspace Inspection Tools
   GET_PROJECT_OVERVIEW: 'modelforge:get-project-overview',

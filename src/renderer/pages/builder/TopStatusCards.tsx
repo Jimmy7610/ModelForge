@@ -13,7 +13,7 @@ function formatAbbreviatedPath(fullPath?: string): string {
 
 export const TopStatusCards: React.FC = () => {
 
-  const { activeProject, hardwareInfo, models, activeModel, inferenceState, setCurrentPage, addProject } = useAppStore();
+  const { activeProject, hardwareInfo, models, activeModel, inferenceState, setCurrentPage, addProject, permissionLevel } = useAppStore();
 
   const handleProjectClick = () => {
     if (!activeProject) {
@@ -90,12 +90,14 @@ export const TopStatusCards: React.FC = () => {
       {/* 4. Mode */}
       <div className="status-card">
         <div className="status-card-icon">
-          <Lock size={18} />
+          <Lock size={18} className={permissionLevel === 'EDIT' ? 'text-warning' : 'text-success'} />
         </div>
         <div className="status-card-body">
           <span className="status-card-label">Mode</span>
-          <span className="status-card-value font-mono">Safe / Read</span>
-          <span className="status-card-sub">Sandbox enforced</span>
+          <span className={`status-card-value font-mono ${permissionLevel === 'EDIT' ? 'text-warning' : ''}`}>
+            {permissionLevel === 'EDIT' ? 'EDIT MODE' : 'Safe / Read'}
+          </span>
+          <span className="status-card-sub">Workspace jailed</span>
         </div>
       </div>
 

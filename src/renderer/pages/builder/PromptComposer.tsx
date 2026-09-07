@@ -12,6 +12,12 @@ export const PromptComposer: React.FC = () => {
     isPlanning,
     runPlanAgent,
     stopPlanAgent,
+    isEditing,
+    permissionLevel,
+    setEditPermissionModalOpen,
+    runEditAgent,
+    stopEditAgent,
+    createManualCheckpoint,
   } = useAppStore();
 
   const [prompt, setPrompt] = useState('');
@@ -20,6 +26,11 @@ export const PromptComposer: React.FC = () => {
   const maxChars = 4000;
 
   const handleRunAgent = () => {
+    if (isEditing) {
+      stopEditAgent();
+      return;
+    }
+
     if (!activeModel) {
       const msg = 'No model loaded. Open Models library to load a GGUF model first.';
       setActiveMessage(msg);
@@ -32,7 +43,20 @@ export const PromptComposer: React.FC = () => {
       addToast(msg, 'warning');
       return;
     }
-    handlePlan();
+    if (!prompt.trim()) {
+      const msg = 'Enter instructions for what you want the Edit Agent to build or modify.';
+      setActiveMessage(msg);
+      addToast(msg, 'warning');
+      return;
+    }
+
+    if (permissionLevel !== 'EDIT') {
+      setEditPermissionModalOpen(true);
+      return;
+    }
+
+    setActiveMessage(null);
+    runEditAgent(prompt.trim());
   };
 
   const handlePlan = () => {
@@ -64,16 +88,14 @@ export const PromptComposer: React.FC = () => {
     runPlanAgent(prompt.trim());
   };
 
-  const handleCheckpoint = () => {
+  const handleCheckpoint = async () => {
     if (!activeProject) {
-      const msg = 'No active project selected. Open or add a project to create git checkpoints.';
+      const msg = 'No active project selected. Open or add a project to create checkpoints.';
       setActiveMessage(msg);
       addToast(msg, 'warning');
       return;
     }
-    const msg = `Checkpoint engine ready for project "${activeProject.name}". (Git integration active in next pass)`;
-    setActiveMessage(msg);
-    addToast(msg, 'info');
+    await createManualCheckpoint(`Manual checkpoint for ${activeProject.name}`);
   };
 
 
@@ -135,14 +157,12 @@ export const PromptComposer: React.FC = () => {
       <div className="composer-actions">
         <div className="action-button-group">
           <button
-            className="btn btn-primary btn-run-agent"
+            className={`btn ${isEditing ? 'btn-danger' : 'btn-primary'} btn-run-agent`}
             onClick={handleRunAgent}
-            title="Run autonomous agent with active model"
+            title={isEditing ? 'Stop running Edit Agent' : 'Run autonomous Edit Agent with active model'}
           >
             <Play size={13} fill="currentColor" />
-            <span>Run Agent</span>
-            <div className="btn-divider" />
-            <ChevronDown size={13} />
+            <span>{isEditing ? 'Stop Agent' : 'Run Agent'}</span>
           </button>
 
           <button

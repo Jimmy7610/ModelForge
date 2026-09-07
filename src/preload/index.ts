@@ -13,6 +13,11 @@ import {
   AgentPlanState,
   RunPlanPayload,
   ToolCapabilityInfo,
+  RunEditPayload,
+  EditAgentState,
+  CheckpointSummary,
+  CheckpointDiffResult,
+  RollbackResult,
 } from '../shared/types';
 import { APP_VERSION, IPC_CHANNELS } from '../shared/constants';
 
@@ -182,6 +187,69 @@ const api: ModelForgeAPI = {
     ipcRenderer.on(IPC_CHANNELS.AGENT_STATE_CHANGED, handler);
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.AGENT_STATE_CHANGED, handler);
+    };
+  },
+
+  // Edit Agent & Checkpoints (Pass 5)
+  runEditAgent: (payload: RunEditPayload): Promise<{ success: boolean; runId: string; checkpointId: string }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.RUN_EDIT_AGENT, payload);
+  },
+
+  stopEditAgent: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.STOP_EDIT_AGENT);
+  },
+
+  getEditAgentState: (): Promise<EditAgentState> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_EDIT_AGENT_STATE);
+  },
+
+  getPendingCheckpoint: (projectId: string): Promise<CheckpointSummary | null> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_PENDING_CHECKPOINT, projectId);
+  },
+
+  getCheckpointDiff: (checkpointId: string, projectId: string): Promise<CheckpointDiffResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_CHECKPOINT_DIFF, { checkpointId, projectId });
+  },
+
+  acceptCheckpoint: (checkpointId: string, projectId: string): Promise<{ success: boolean }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.ACCEPT_CHECKPOINT, { checkpointId, projectId });
+  },
+
+  rollbackCheckpoint: (checkpointId: string, projectId: string): Promise<RollbackResult> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.ROLLBACK_CHECKPOINT, { checkpointId, projectId });
+  },
+
+  createManualCheckpoint: (projectId: string, description?: string): Promise<CheckpointSummary> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.CREATE_MANUAL_CHECKPOINT, { projectId, description });
+  },
+
+  onEditAgentActivity: (callback: (activity: AgentActivityItem) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, activity: AgentActivityItem) => {
+      callback(activity);
+    };
+    ipcRenderer.on(IPC_CHANNELS.EDIT_AGENT_ACTIVITY, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EDIT_AGENT_ACTIVITY, handler);
+    };
+  },
+
+  onEditAgentChunk: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, chunk: any) => {
+      callback(chunk);
+    };
+    ipcRenderer.on(IPC_CHANNELS.EDIT_AGENT_CHUNK, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EDIT_AGENT_CHUNK, handler);
+    };
+  },
+
+  onEditAgentStateChange: (callback: (state: EditAgentState) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: EditAgentState) => {
+      callback(state);
+    };
+    ipcRenderer.on(IPC_CHANNELS.EDIT_AGENT_STATE_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EDIT_AGENT_STATE_CHANGED, handler);
     };
   },
 

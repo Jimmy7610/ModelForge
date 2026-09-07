@@ -1,0 +1,50 @@
+.crash-recovery-banner {
+  background: rgba(217, 119, 6, 0.12);
+  border-bottom: 1px solid rgba(217, 119, 6, 0.35);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  z-index: 20;
+}
+
+.banner-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary, #fafafa);
+}
+
+.banner-icon {
+  flex-shrink: 0;
+}
+
+.banner-meta {
+  font-size: 11px;
+}
+
+.banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 4px;
+}
+
+.banner-dismiss {
+  margin-left: 4px;
+  color: var(--text-muted, #71717a);
+}
+
+.banner-dismiss:hover {
+  color: var(--text-primary, #fafafa);
+}

@@ -176,6 +176,7 @@ export class WorkspaceTools {
         path: filePath,
         relativePath: check.relativePath,
         content: `[Binary file cannot be displayed: ${path.basename(filePath)} (${stat.size} bytes)]`,
+        rawContent: '',
         totalLines: 0,
         startLine: 1,
         endLine: 1,
@@ -208,6 +209,7 @@ export class WorkspaceTools {
     const endLine = Math.min(totalLines, Math.max(startLine, requestedEnd));
 
     const selectedLines = allLines.slice(startLine - 1, endLine);
+    const rawContent = selectedLines.join('\n');
     const hasMoreLines = endLine < totalLines;
 
     const formattedLines = selectedLines.map((line, idx) => `${startLine + idx}: ${line}`).join('\n');
@@ -222,6 +224,7 @@ export class WorkspaceTools {
       path: filePath,
       relativePath: check.relativePath,
       content: finalContent,
+      rawContent,
       totalLines,
       startLine,
       endLine,

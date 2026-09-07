@@ -54,6 +54,7 @@ export interface FileReadResult {
   path: string;
   relativePath: string;
   content: string;
+  rawContent: string;
   totalLines: number;
   startLine: number;
   endLine: number;

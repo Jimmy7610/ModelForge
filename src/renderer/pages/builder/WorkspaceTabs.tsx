@@ -15,6 +15,7 @@ import { WorkspaceTab } from '@shared/types';
 import './WorkspaceTabs.css';
 import { ChatTab } from './ChatTab';
 import { FilesTab } from './files/FilesTab';
+import { DiffTab } from './diff/DiffTab';
 
 export const WorkspaceTabs: React.FC = () => {
   const { activeTab, setActiveTab, activeProject } = useAppStore();
@@ -78,15 +79,7 @@ export const WorkspaceTabs: React.FC = () => {
         )}
 
         {/* TAB: DIFF */}
-        {activeTab === 'diff' && (
-          <div className="tab-empty-state">
-            <GitCompare size={28} className="text-muted" />
-            <div className="tab-empty-title">Safe Read-Only Workspace</div>
-            <div className="tab-empty-sub">
-              Model Forge is operating in Safe Read-Only Mode (Pass 4). Diff inspection, checkpointing, and code modifications will be introduced in Pass 5.
-            </div>
-          </div>
-        )}
+        {activeTab === 'diff' && <DiffTab />}
 
         {/* TAB: GIT */}
         {activeTab === 'git' && (

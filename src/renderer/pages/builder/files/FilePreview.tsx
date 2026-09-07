@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Lock, ShieldAlert, FileText, AlertTriangle, RefreshCw } from 'lucide-react';
 import { FileReadResult } from '../../../../main/workspace/types';
 import { CopyButton } from '@/components/CopyButton';
+import { useAppStore } from '@/store/AppStoreContext';
 
 interface FilePreviewProps {
   projectId: string;
@@ -17,6 +18,7 @@ const formatSize = (bytes: number): string => {
 };
 
 export const FilePreview: React.FC<FilePreviewProps> = ({ projectId, relativePath }) => {
+  const { fileTreeRefreshCounter } = useAppStore();
   const [fileData, setFileData] = useState<FileReadResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,18 +58,7 @@ export const FilePreview: React.FC<FilePreviewProps> = ({ projectId, relativePat
     return () => {
       isMounted = false;
     };
-  }, [projectId, relativePath]);
-
-  const getCleanCode = (): string => {
-    if (!fileData?.content) return '';
-    const rawLines = fileData.content.split(/\r?\n/);
-    const cleaned: string[] = [];
-    for (const l of rawLines) {
-      if (l.startsWith('[Truncated:')) continue;
-      cleaned.push(l.replace(/^\d+:\s?/, ''));
-    }
-    return cleaned.join('\n');
-  };
+  }, [projectId, relativePath, fileTreeRefreshCounter]);
 
   if (!relativePath) {
     return (
@@ -113,8 +104,12 @@ export const FilePreview: React.FC<FilePreviewProps> = ({ projectId, relativePat
     return null;
   }
 
-  // Split lines for line-numbered rendering
-  const lines = fileData.content.split(/\r?\n/);
+  // Split raw lines for clean gutter + code rendering
+  const lines = fileData.rawContent ? fileData.rawContent.split(/\r?\n/) : [];
+  const copyContentsLabel = fileData.truncated ? 'Copy Visible Content' : 'Copy File Contents';
+  const copyContentsTooltip = fileData.truncated
+    ? 'Copy visible content from preview'
+    : 'Copy file contents';
 
   return (
     <div className="file-preview-container">
@@ -125,7 +120,7 @@ export const FilePreview: React.FC<FilePreviewProps> = ({ projectId, relativePat
           <span className="file-preview-path font-mono font-semibold" title={fileData.relativePath}>
             {fileData.relativePath}
           </span>
-          <span className="read-only-badge" title="Workspace Protected (No mutation allowed)">
+          <span className="read-only-badge" title="Workspace Protected">
             <Lock size={10} />
             <span>READ ONLY</span>
           </span>
@@ -136,12 +131,19 @@ export const FilePreview: React.FC<FilePreviewProps> = ({ projectId, relativePat
           <span className="meta-sep">•</span>
           <span>{fileData.totalLines} lines</span>
           <CopyButton
-            text={getCleanCode}
-            label="Copy File"
+            text={fileData.relativePath}
+            label="Copy Path"
             compact
-            tooltip="Copy clean file contents (line numbers stripped)"
-            ariaLabel="Copy file contents"
-            disabled={fileData.isBinary}
+            tooltip="Copy relative file path"
+            ariaLabel="Copy relative file path"
+          />
+          <CopyButton
+            text={fileData.rawContent}
+            label={copyContentsLabel}
+            compact
+            tooltip={copyContentsTooltip}
+            ariaLabel={copyContentsLabel}
+            disabled={Boolean(fileData.isBinary)}
           />
         </div>
       </div>
@@ -173,12 +175,12 @@ export const FilePreview: React.FC<FilePreviewProps> = ({ projectId, relativePat
           {/* Code Viewer with Line Numbers */}
           <div className="file-preview-code-viewport custom-scrollbar">
             <div className="code-table">
-              {lines.map((line, idx) => {
+              {lines.map((rawLine, idx) => {
                 const lineNum = (fileData.startLine || 1) + idx;
                 return (
                   <div key={lineNum} className="code-line">
                     <span className="line-gutter font-mono">{lineNum}</span>
-                    <span className="line-content font-mono">{line || ' '}</span>
+                    <span className="line-content font-mono">{rawLine || ' '}</span>
                   </div>
                 );
               })}

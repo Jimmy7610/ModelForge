@@ -2,7 +2,7 @@ import { BrowserWindow, clipboard, dialog, ipcMain } from 'electron';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { AppSettings, ModelLibrary, ModelRecord, SendChatMessagePayload } from '../shared/types';
+import { AppSettings, ModelLibrary, ModelRecord, RunEditPayload, SendChatMessagePayload } from '../shared/types';
 
 import { IPC_CHANNELS, MAX_PROMPT_CHARS } from '../shared/constants';
 import { PersistenceStore } from './store';
@@ -11,7 +11,8 @@ import { ModelRegistry } from './models/registry';
 import { normalizePath, scanDirectoriesForGguf } from './models/scanner';
 import { getDriveStorageForPath } from './models/storage';
 import { InferenceService } from './inference';
-import { PlanAgent } from './agent';
+import { EditAgent, PlanAgent } from './agent';
+import { DiffService } from './edit';
 import { WorkspaceGuard, WorkspaceTools } from './workspace';
 
 export function registerIpcHandlers(
@@ -19,9 +20,12 @@ export function registerIpcHandlers(
   store: PersistenceStore,
   registry: ModelRegistry,
   inferenceService: InferenceService,
-  existingPlanAgent?: PlanAgent
+  existingPlanAgent?: PlanAgent,
+  existingEditAgent?: EditAgent
 ): void {
   const planAgent = existingPlanAgent || new PlanAgent(inferenceService);
+  const editAgent = existingEditAgent || new EditAgent(inferenceService);
+  const checkpointService = editAgent.getCheckpointService();
 
   // Setup inference callbacks for streaming and state sync
 
@@ -474,6 +478,102 @@ export function registerIpcHandlers(
     const tools = new WorkspaceTools(guard);
     return tools.searchText(opts);
   });
+
+  // Edit Agent & Checkpoint Handlers (Pass 5)
+  ipcMain.handle(IPC_CHANNELS.RUN_EDIT_AGENT, async (_event, payload: RunEditPayload) => {
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === payload.projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${payload.projectId}`);
+    }
+
+    const runId = crypto.randomUUID();
+
+    // Start editing task asynchronously
+    editAgent
+      .startEditing(
+        project,
+        payload.prompt,
+        {
+          onActivity: (act) => {
+            if (!mainWindow.isDestroyed()) {
+              mainWindow.webContents.send(IPC_CHANNELS.EDIT_AGENT_ACTIVITY, act);
+            }
+          },
+          onChunk: (chunk) => {
+            if (!mainWindow.isDestroyed()) {
+              mainWindow.webContents.send(IPC_CHANNELS.EDIT_AGENT_CHUNK, chunk);
+            }
+          },
+          onStateChange: (state) => {
+            if (!mainWindow.isDestroyed()) {
+              mainWindow.webContents.send(IPC_CHANNELS.EDIT_AGENT_STATE_CHANGED, state);
+            }
+          },
+        },
+        runId
+      )
+      .catch((err) => {
+        console.error('[IPC] EditAgent task error:', err);
+      });
+
+    return {
+      success: true,
+      runId,
+      checkpointId: editAgent.getState().checkpointId || '',
+    };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.STOP_EDIT_AGENT, async () => {
+    return editAgent.stopEditing();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_EDIT_AGENT_STATE, () => {
+    return editAgent.getState();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_PENDING_CHECKPOINT, (_event, projectId: string) => {
+    return checkpointService.getPendingCheckpoint(projectId);
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.GET_CHECKPOINT_DIFF,
+    (_event, { checkpointId, projectId }: { checkpointId: string; projectId: string }) => {
+      const manifest = checkpointService.loadManifest(projectId, checkpointId);
+      if (!manifest) {
+        throw new Error(`Checkpoint not found: ${checkpointId}`);
+      }
+      const checkpointDir = checkpointService.getCheckpointDir(projectId, checkpointId);
+      return DiffService.computeCheckpointDiff(manifest, checkpointDir, manifest.projectRoot);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.ACCEPT_CHECKPOINT,
+    (_event, { checkpointId, projectId }: { checkpointId: string; projectId: string }) => {
+      return checkpointService.accept(checkpointId, projectId);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.ROLLBACK_CHECKPOINT,
+    (_event, { checkpointId, projectId }: { checkpointId: string; projectId: string }) => {
+      return checkpointService.rollback(checkpointId, projectId);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.CREATE_MANUAL_CHECKPOINT,
+    (_event, { projectId, description }: { projectId: string; description?: string }) => {
+      const projects = store.getProjects();
+      const project = projects.find((p) => p.id === projectId);
+      if (!project) {
+        throw new Error(`Project not found: ${projectId}`);
+      }
+      const projectPath = project.rootPath || project.path;
+      return checkpointService.createManualCheckpoint(projectId, projectPath, description);
+    }
+  );
 
   // System & Clipboard (Pass 4.1)
   ipcMain.handle(IPC_CHANNELS.COPY_TEXT, (_event, text: unknown) => {

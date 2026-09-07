@@ -139,10 +139,12 @@ describe('WorkspaceGuard & Hard Workspace Jail', () => {
     expect(guardAny.executeShell).toBeUndefined();
     expect(guardAny.runCommand).toBeUndefined();
 
-    // isAllowed rejects any operation other than read
-    expect(guard.isAllowed('src/App.tsx', 'write' as any)).toBe(false);
+    // WorkspaceGuard has zero file-mutation methods: it only inspects paths and checks permissions.
+    // In Pass 5, isAllowed supports read and write path checks, but strictly blocks delete/execute operations
     expect(guard.isAllowed('src/App.tsx', 'delete' as any)).toBe(false);
     expect(guard.isAllowed('src/App.tsx', 'execute' as any)).toBe(false);
     expect(guard.isAllowed('src/App.tsx', 'read')).toBe(true);
+    expect(guard.isAllowed('src/App.tsx', 'write')).toBe(true);
+    expect(guard.isAllowed('.env', 'write')).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Search, Lock, AlertCircle, FolderGit2 } from 'lucide-react';
 import { WorkspaceEntry } from '../../../../main/workspace/types';
+import { useAppStore } from '@/store/AppStoreContext';
 import { FileTreeNode } from './FileTreeNode';
 
 interface FileTreeProps {
@@ -16,6 +17,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
   selectedPath,
   onSelectFile,
 }) => {
+  const { fileTreeRefreshCounter } = useAppStore();
   const [rootEntries, setRootEntries] = useState<WorkspaceEntry[]>([]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [childrenMap, setChildrenMap] = useState<Map<string, WorkspaceEntry[]>>(new Map());
@@ -49,7 +51,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
   useEffect(() => {
     fetchRootEntries();
-  }, [fetchRootEntries]);
+  }, [fetchRootEntries, fileTreeRefreshCounter]);
 
   const handleToggleFolder = async (folderPath: string) => {
     if (expandedFolders.has(folderPath)) {

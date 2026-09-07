@@ -565,7 +565,8 @@ export class InferenceService {
       if (options.followUpPrompt && !options.signal?.aborted) {
         let nextPrompt = await options.followUpPrompt();
         while (nextPrompt && !options.signal?.aborted) {
-          await agentSession.prompt(nextPrompt, promptOptions);
+          const followUpOptions = { ...promptOptions, functions: undefined };
+          await agentSession.prompt(nextPrompt, followUpOptions);
           nextPrompt = await options.followUpPrompt();
         }
       }

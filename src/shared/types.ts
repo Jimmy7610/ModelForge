@@ -185,11 +185,14 @@ export interface InferenceState {
   toolCapability?: ToolCapabilityInfo;
 }
 
+export type MessageKind = 'chat' | 'plan' | 'edit-result';
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: number;
+  kind?: MessageKind;
   metrics?: ChatMetrics;
   isStreaming?: boolean;
 }
@@ -200,6 +203,8 @@ export interface BridgeInfo {
   preloadFormat: 'cjs';
   platform: string;
 }
+
+export type PermissionLevel = 'READ' | 'EDIT' | 'AGENT' | 'YOLO';
 
 export type AgentActivityStatus = 'running' | 'done' | 'blocked' | 'error';
 
@@ -246,6 +251,105 @@ export interface RunPlanPayload {
   prompt: string;
 }
 
+// Checkpoint & Diff Types (Pass 5)
+export type CheckpointStatus = 'armed' | 'pending' | 'accepted' | 'rolled_back' | 'interrupted' | 'conflict';
+
+export interface CheckpointFileEntry {
+  relativePath: string;
+  existedBefore: boolean;
+  originalSha256?: string;
+  originalSizeBytes?: number;
+  backupFileName?: string;
+  lastAgentSha256?: string;
+  createdParentDirs?: string[];
+  newlineStyle?: 'lf' | 'crlf';
+  hasBom?: boolean;
+}
+
+export interface CheckpointManifest {
+  id: string;
+  projectId: string;
+  projectRoot: string;
+  timestamp: string;
+  type: 'automatic' | 'manual';
+  status: CheckpointStatus;
+  description?: string;
+  files: Record<string, CheckpointFileEntry>;
+  totalBackupBytes: number;
+}
+
+export interface CheckpointSummary {
+  id: string;
+  projectId: string;
+  timestamp: string;
+  type: 'automatic' | 'manual';
+  status: CheckpointStatus;
+  description?: string;
+  filesCount: number;
+  totalBackupBytes: number;
+}
+
+export type FileDiffStatus = 'modified' | 'created' | 'deleted' | 'unchanged';
+
+export interface FileDiffItem {
+  relativePath: string;
+  status: FileDiffStatus;
+  insertions: number;
+  deletions: number;
+  unifiedDiff: string;
+  hasConflict?: boolean;
+  conflictReason?: string;
+}
+
+export interface CheckpointDiffResult {
+  checkpointId: string;
+  projectId: string;
+  files: FileDiffItem[];
+  totalFilesChanged: number;
+  totalInsertions: number;
+  totalDeletions: number;
+  hasConflict: boolean;
+}
+
+export interface RollbackResult {
+  success: boolean;
+  checkpointId: string;
+  restoredFiles: string[];
+  deletedCreatedFiles: string[];
+  cleanedDirs: string[];
+  conflicts: Array<{ relativePath: string; reason: string }>;
+  error?: string;
+}
+
+export interface EditExecutionSummary {
+  totalToolCalls: number;
+  successfulToolCalls: number;
+  failedToolCalls: number;
+  blockedToolCalls: number;
+  filesModified: string[];
+  filesCreated: string[];
+  filesDeleted: string[];
+  distinctToolNames: string[];
+  durationMs: number;
+}
+
+export interface EditAgentState {
+  runId: string | null;
+  status: 'idle' | 'running' | 'completed' | 'error' | 'stopped';
+  activeProjectId: string | null;
+  checkpointId: string | null;
+  activities: AgentActivityItem[];
+  currentActivity?: string;
+  resultMessage?: string;
+  error?: string;
+  summary?: EditExecutionSummary;
+}
+
+export interface RunEditPayload {
+  projectId: string;
+  prompt: string;
+}
+
 export interface ModelForgeAPI {
   // Diagnostics & Bridge Health
   getBridgeInfo: () => BridgeInfo;
@@ -287,6 +391,19 @@ export interface ModelForgeAPI {
   onAgentActivity: (callback: (activity: AgentActivityItem) => void) => () => void;
   onAgentChunk: (callback: (chunk: ChatGenerationChunk) => void) => () => void;
   onAgentStateChange: (callback: (state: AgentPlanState) => void) => () => void;
+
+  // Edit Agent & Checkpoints (Pass 5)
+  runEditAgent: (payload: RunEditPayload) => Promise<{ success: boolean; runId: string; checkpointId: string }>;
+  stopEditAgent: () => Promise<boolean>;
+  getEditAgentState: () => Promise<EditAgentState>;
+  getPendingCheckpoint: (projectId: string) => Promise<CheckpointSummary | null>;
+  getCheckpointDiff: (checkpointId: string, projectId: string) => Promise<CheckpointDiffResult | null>;
+  acceptCheckpoint: (checkpointId: string, projectId: string) => Promise<{ success: boolean }>;
+  rollbackCheckpoint: (checkpointId: string, projectId: string) => Promise<RollbackResult>;
+  createManualCheckpoint: (projectId: string, description?: string) => Promise<CheckpointSummary>;
+  onEditAgentActivity: (callback: (activity: AgentActivityItem) => void) => () => void;
+  onEditAgentChunk: (callback: (chunk: ChatGenerationChunk) => void) => () => void;
+  onEditAgentStateChange: (callback: (state: EditAgentState) => void) => () => void;
 
   // Read-Only Workspace Inspection Tools
   getProjectOverview: (projectId?: string) => Promise<any>;

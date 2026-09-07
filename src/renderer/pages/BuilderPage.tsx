@@ -4,11 +4,16 @@ import { PromptComposer } from './builder/PromptComposer';
 import { AgentPermissions } from './builder/AgentPermissions';
 import { AgentActivity } from './builder/AgentActivity';
 import { WorkspaceTabs } from './builder/WorkspaceTabs';
+import { CrashRecoveryBanner } from './builder/CrashRecoveryBanner';
+import { EditPermissionModal } from '@/components/common/EditPermissionModal';
 import './BuilderPage.css';
 
 export const BuilderPage: React.FC = () => {
   return (
     <div className="builder-page">
+      {/* 0. Crash / Interrupted Session Recovery Banner */}
+      <CrashRecoveryBanner />
+
       {/* 1. Top Status Cards */}
       <TopStatusCards />
 
@@ -27,6 +32,9 @@ export const BuilderPage: React.FC = () => {
       <div className="builder-bottom-row">
         <WorkspaceTabs />
       </div>
+
+      {/* 4. Edit Permission Confirmation Modal */}
+      <EditPermissionModal />
     </div>
   );
 };

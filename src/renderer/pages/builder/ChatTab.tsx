@@ -233,7 +233,13 @@ export const ChatTab: React.FC = () => {
                   <div className="chat-bubble-header">
                     <div className="chat-bubble-header-left">
                       <span className="chat-bubble-author">
-                        {msg.role === 'user' ? 'You' : activeModel.name}
+                        {msg.role === 'user'
+                          ? 'You'
+                          : msg.kind === 'plan'
+                          ? `${activeModel.name} · Plan`
+                          : msg.kind === 'edit-result'
+                          ? `${activeModel.name} · Edit Result`
+                          : activeModel.name}
                       </span>
                       <span className="chat-bubble-time">
                         {new Date(msg.timestamp).toLocaleTimeString([], {
@@ -247,16 +253,32 @@ export const ChatTab: React.FC = () => {
                     <div className="chat-bubble-header-actions">
                       <CopyButton
                         text={msg.content}
-                        label={msg.role === 'assistant' ? 'Copy' : undefined}
+                        label={
+                          msg.role === 'assistant'
+                            ? msg.kind === 'plan'
+                              ? 'Copy Plan'
+                              : msg.kind === 'edit-result'
+                              ? 'Copy Result'
+                              : 'Copy Response'
+                            : undefined
+                        }
                         compact
                         tooltip={
                           msg.role === 'assistant'
-                            ? 'Copy response (source markdown)'
+                            ? msg.kind === 'plan'
+                              ? 'Copy plan (source markdown)'
+                              : msg.kind === 'edit-result'
+                              ? 'Copy edit result (source markdown)'
+                              : 'Copy response (source markdown)'
                             : 'Copy prompt'
                         }
                         ariaLabel={
                           msg.role === 'assistant'
-                            ? 'Copy assistant response'
+                            ? msg.kind === 'plan'
+                              ? 'Copy plan'
+                              : msg.kind === 'edit-result'
+                              ? 'Copy edit result'
+                              : 'Copy response'
                             : 'Copy prompt'
                         }
                         disabled={msg.isStreaming && !msg.content}

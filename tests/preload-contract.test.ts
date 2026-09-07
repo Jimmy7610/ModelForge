@@ -37,11 +37,11 @@ describe('Preload & Bridge Architecture Contract', () => {
     };
 
     expect(bridgeInfo.available).toBe(true);
-    expect(bridgeInfo.version).toBe('0.4.1');
+    expect(bridgeInfo.version).toBe('0.5.0');
     expect(bridgeInfo.preloadFormat).toBe('cjs');
   });
 
-  it('verifies ModelForgeAPI includes getBridgeInfo and copyText contracts', () => {
+  it('verifies ModelForgeAPI includes getBridgeInfo, copyText, and Pass 5 Edit/Checkpoint contracts', () => {
     const dummyApi: Partial<ModelForgeAPI> = {
       getBridgeInfo: () => ({
         available: true,
@@ -50,13 +50,39 @@ describe('Preload & Bridge Architecture Contract', () => {
         platform: process.platform,
       }),
       copyText: async (text: string) => typeof text === 'string',
+      runEditAgent: async () => ({ success: true, runId: 'test', checkpointId: 'cp1' }),
+      stopEditAgent: async () => true,
+      acceptCheckpoint: async () => ({ success: true }),
+      rollbackCheckpoint: async () => ({
+        success: true,
+        checkpointId: '1',
+        restoredFiles: [],
+        deletedCreatedFiles: [],
+        cleanedDirs: [],
+        conflicts: [],
+      }),
+      createManualCheckpoint: async () => ({
+        id: '1',
+        projectId: 'p',
+        timestamp: '2026-09-07T00:00:00.000Z',
+        type: 'manual',
+        status: 'accepted',
+        filesCount: 0,
+        totalBackupBytes: 0,
+      }),
+      getPendingCheckpoint: async () => null,
+      getCheckpointDiff: async () => null,
     };
 
     expect(dummyApi.getBridgeInfo).toBeDefined();
     const result = dummyApi.getBridgeInfo!();
     expect(result.available).toBe(true);
-    expect(result.version).toBe('0.4.1');
+    expect(result.version).toBe('0.5.0');
     expect(result.preloadFormat).toBe('cjs');
     expect(dummyApi.copyText).toBeDefined();
+    expect(dummyApi.runEditAgent).toBeDefined();
+    expect(dummyApi.acceptCheckpoint).toBeDefined();
+    expect(dummyApi.rollbackCheckpoint).toBeDefined();
+    expect(dummyApi.createManualCheckpoint).toBeDefined();
   });
 });

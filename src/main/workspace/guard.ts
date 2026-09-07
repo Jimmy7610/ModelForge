@@ -180,14 +180,129 @@ export class WorkspaceGuard {
   }
 
   /**
-   * Universal permission check for workspace operations.
-   * In PASS 4, only 'read' is allowed. Mutation operations are strictly rejected.
+   * Resolves an input path for mutation (create, modify, delete) and determines whether writing is allowed.
    */
-  public isAllowed(inputPath: string, operation: 'read'): boolean {
-    if (operation !== 'read') {
-      return false;
+  public resolveWritePath(inputPath: string): {
+    allowed: boolean;
+    canonicalPath: string;
+    relativePath: string;
+    error?: string;
+  } {
+    try {
+      if (typeof inputPath !== 'string') {
+        return {
+          allowed: false,
+          canonicalPath: '',
+          relativePath: '',
+          error: 'Path must be a string',
+        };
+      }
+
+      const trimmed = inputPath.trim();
+      if (!trimmed || trimmed === '.') {
+        return {
+          allowed: false,
+          canonicalPath: '',
+          relativePath: '',
+          error: 'Cannot modify project root directory',
+        };
+      }
+
+      assertPathTraversalSafe(trimmed);
+
+      const targetAbsolute = path.isAbsolute(trimmed)
+        ? path.resolve(trimmed)
+        : path.resolve(this.canonicalRootPath, trimmed);
+
+      // Verify no existing directory component along the path is a symlink escaping workspace
+      let checkPart = targetAbsolute;
+      while (checkPart && checkPart !== path.dirname(checkPart)) {
+        if (fs.existsSync(checkPart)) {
+          const lstat = fs.lstatSync(checkPart);
+          if (lstat.isSymbolicLink()) {
+            const linkTarget = fs.realpathSync(checkPart);
+            if (!isPathContainedInRoot(linkTarget, this.canonicalRootPath)) {
+              return {
+                allowed: false,
+                canonicalPath: targetAbsolute,
+                relativePath: '',
+                error: `Path contains symlink/junction escaping workspace jail: "${checkPart}" -> "${linkTarget}"`,
+              };
+            }
+          }
+        }
+        checkPart = path.dirname(checkPart);
+      }
+
+      const targetCanonical = resolveCanonicalPath(targetAbsolute);
+
+      if (!isPathContainedInRoot(targetCanonical, this.canonicalRootPath)) {
+        return {
+          allowed: false,
+          canonicalPath: targetCanonical,
+          relativePath: '',
+          error: `Write path escapes workspace jail root: "${inputPath}" -> "${targetCanonical}"`,
+        };
+      }
+
+      if (normalizeWorkspacePath(targetCanonical).toLowerCase() === normalizeWorkspacePath(this.canonicalRootPath).toLowerCase()) {
+        return {
+          allowed: false,
+          canonicalPath: targetCanonical,
+          relativePath: '',
+          error: 'Cannot modify project root directory itself',
+        };
+      }
+
+      if (isSensitiveFile(targetCanonical)) {
+        return {
+          allowed: false,
+          canonicalPath: targetCanonical,
+          relativePath: path.relative(this.canonicalRootPath, targetCanonical),
+          error: `Modification of sensitive credential or secret file is prohibited: ${path.basename(targetCanonical)}`,
+        };
+      }
+
+      const rel = path.relative(this.canonicalRootPath, targetCanonical);
+      const relativePath = normalizeWorkspacePath(rel);
+
+      const segments = relativePath.split('/');
+      if (segments.some((s) => s.toLowerCase() === '.git' || s.toLowerCase() === 'node_modules')) {
+        return {
+          allowed: false,
+          canonicalPath: targetCanonical,
+          relativePath,
+          error: `Modification inside protected directory is prohibited: ${relativePath}`,
+        };
+      }
+
+      return {
+        allowed: true,
+        canonicalPath: targetCanonical,
+        relativePath: relativePath === '.' ? '' : relativePath,
+      };
+    } catch (err) {
+      return {
+        allowed: false,
+        canonicalPath: '',
+        relativePath: '',
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
-    const check = this.resolveReadPath(inputPath);
-    return check.allowed;
+  }
+
+  /**
+   * Universal permission check for workspace operations.
+   */
+  public isAllowed(inputPath: string, operation: 'read' | 'write'): boolean {
+    if (operation === 'read') {
+      const check = this.resolveReadPath(inputPath);
+      return check.allowed;
+    }
+    if (operation === 'write') {
+      const check = this.resolveWritePath(inputPath);
+      return check.allowed;
+    }
+    return false;
   }
 }

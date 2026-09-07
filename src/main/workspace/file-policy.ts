@@ -69,6 +69,11 @@ const SENSITIVE_PATTERNS = [
   /\.p12$/i,
   /credentials\.json$/i,
   /secret/i,
+  /^\.npmrc$/i,
+  /^\.bashrc$/i,
+  /^\.zshrc$/i,
+  /authorized_keys/i,
+  /known_hosts/i,
 ];
 
 /**

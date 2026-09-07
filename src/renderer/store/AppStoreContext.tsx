@@ -22,6 +22,11 @@ import {
   WorkspaceTab,
   AgentActivityItem,
   AgentPlanState,
+  CheckpointDiffResult,
+  CheckpointSummary,
+  EditAgentState,
+  PermissionLevel,
+  RollbackResult,
 } from '@shared/types';
 
 import { DEFAULT_SETTINGS } from '@shared/constants';
@@ -44,6 +49,13 @@ interface AppStoreContextType {
   setActiveProjectId: (id: string | null) => void;
   addProject: () => Promise<Project | null>;
   removeProject: (id: string) => Promise<void>;
+
+  // Permission Model (Pass 5)
+  permissionLevel: PermissionLevel;
+  setPermissionLevel: (level: PermissionLevel) => void;
+  isEditPermissionModalOpen: boolean;
+  setEditPermissionModalOpen: (open: boolean) => void;
+  confirmEnableEdit: () => void;
 
   // Models & Libraries
   models: ModelRecord[];
@@ -79,6 +91,21 @@ interface AppStoreContextType {
   runPlanAgent: (prompt: string) => Promise<void>;
   stopPlanAgent: () => Promise<boolean>;
   clearAgentActivities: () => void;
+
+  // Edit Agent & Checkpoints (Pass 5)
+  isEditing: boolean;
+  editAgentState: EditAgentState | null;
+  pendingCheckpoint: CheckpointSummary | null;
+  checkpointDiff: CheckpointDiffResult | null;
+  runEditAgent: (prompt: string) => Promise<void>;
+  stopEditAgent: () => Promise<boolean>;
+  acceptCheckpoint: () => Promise<void>;
+  rollbackCheckpoint: () => Promise<RollbackResult | null>;
+  createManualCheckpoint: (description?: string) => Promise<CheckpointSummary | null>;
+  refreshPendingCheckpointAndDiff: () => Promise<void>;
+  dismissRecoveryBanner: () => void;
+  isRecoveryBannerDismissed: boolean;
+  fileTreeRefreshCounter: number;
 
   hardwareInfo: HardwareInfo | null;
   toasts: ToastItem[];
@@ -122,6 +149,16 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
   activeRunIdRef.current = activeRunId;
+
+  // Permission & Edit Agent (Pass 5)
+  const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>('READ');
+  const [isEditPermissionModalOpen, setEditPermissionModalOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editAgentState, setEditAgentState] = useState<EditAgentState | null>(null);
+  const [pendingCheckpoint, setPendingCheckpoint] = useState<CheckpointSummary | null>(null);
+  const [checkpointDiff, setCheckpointDiff] = useState<CheckpointDiffResult | null>(null);
+  const [isRecoveryBannerDismissed, setIsRecoveryBannerDismissed] = useState(false);
+  const [fileTreeRefreshCounter, setFileTreeRefreshCounter] = useState(0);
 
 
   const addToast = useCallback((message: string, type: ToastItem['type'] = 'info') => {
@@ -283,6 +320,64 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         });
       }
 
+      let unsubscribeEditActivity: (() => void) | undefined;
+      if (window.modelForge.onEditAgentActivity) {
+        unsubscribeEditActivity = window.modelForge.onEditAgentActivity((activity) => {
+          if (activity.runId && activeRunIdRef.current && activity.runId !== activeRunIdRef.current) {
+            return;
+          }
+          setAgentActivities((prev) => {
+            const idx = prev.findIndex((a) => a.id === activity.id);
+            if (idx >= 0) {
+              const updated = [...prev];
+              updated[idx] = activity;
+              return updated;
+            }
+            return [...prev, activity];
+          });
+        });
+      }
+
+      let unsubscribeEditChunk: (() => void) | undefined;
+      if (window.modelForge.onEditAgentChunk) {
+        unsubscribeEditChunk = window.modelForge.onEditAgentChunk((chunk) => {
+          if (chunk.runId && activeRunIdRef.current && chunk.runId !== activeRunIdRef.current) {
+            return;
+          }
+          setChatMessages((prev) => {
+            const updated = [...prev];
+            const lastIndex = updated.length - 1;
+            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
+              const current = updated[lastIndex];
+              updated[lastIndex] = {
+                ...current,
+                content: current.content + chunk.text,
+                isStreaming: !chunk.isDone,
+              };
+            }
+            return updated;
+          });
+          if (chunk.isDone) {
+            setIsEditing(false);
+            setFileTreeRefreshCounter((c) => c + 1);
+          }
+        });
+      }
+
+      let unsubscribeEditState: (() => void) | undefined;
+      if (window.modelForge.onEditAgentStateChange) {
+        unsubscribeEditState = window.modelForge.onEditAgentStateChange((state) => {
+          if (state.runId && activeRunIdRef.current && state.runId !== activeRunIdRef.current) {
+            return;
+          }
+          setEditAgentState(state);
+          setIsEditing(state.status === 'running');
+          if (state.status !== 'running') {
+            setFileTreeRefreshCounter((c) => c + 1);
+          }
+        });
+      }
+
       return () => {
         unsubscribeState();
         unsubscribeInferenceState();
@@ -290,6 +385,9 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         if (unsubscribeScan) unsubscribeScan();
         if (unsubscribeAgentActivity) unsubscribeAgentActivity();
         if (unsubscribeAgentState) unsubscribeAgentState();
+        if (unsubscribeEditActivity) unsubscribeEditActivity();
+        if (unsubscribeEditChunk) unsubscribeEditChunk();
+        if (unsubscribeEditState) unsubscribeEditState();
       };
 
     }
@@ -547,11 +645,42 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const handleSetActiveProjectId = useCallback((id: string | null) => {
     setActiveProjectId(id);
+    setPermissionLevel('READ');
+    setIsRecoveryBannerDismissed(false);
     if (typeof window !== 'undefined' && window.modelForge?.setActiveProject) {
       window.modelForge.setActiveProject(id).catch(console.error);
     }
   }, []);
 
+  const refreshPendingCheckpointAndDiff = useCallback(async () => {
+    if (typeof window === 'undefined' || !window.modelForge || !activeProjectId) {
+      setPendingCheckpoint(null);
+      setCheckpointDiff(null);
+      return;
+    }
+    try {
+      const pending = await window.modelForge.getPendingCheckpoint(activeProjectId);
+      setPendingCheckpoint(pending);
+      if (pending?.id) {
+        const diff = await window.modelForge.getCheckpointDiff(pending.id, activeProjectId);
+        setCheckpointDiff(diff);
+      } else {
+        setCheckpointDiff(null);
+      }
+    } catch (err) {
+      console.error('[AppStore] Failed to refresh checkpoint and diff:', err);
+    }
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    refreshPendingCheckpointAndDiff();
+  }, [activeProjectId, refreshPendingCheckpointAndDiff]);
+
+  const confirmEnableEdit = useCallback(() => {
+    setPermissionLevel('EDIT');
+    setEditPermissionModalOpen(false);
+    addToast('Edit mode enabled for active project in this session.', 'info');
+  }, [addToast]);
 
   const handleRunPlanAgent = useCallback(
     async (prompt: string) => {
@@ -581,6 +710,7 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         role: 'assistant',
         content: '',
         timestamp: Date.now(),
+        kind: 'plan',
         isStreaming: true,
       };
 
@@ -628,9 +758,156 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
     return false;
   }, []);
 
+  const handleRunEditAgent = useCallback(
+    async (prompt: string) => {
+      const activeProj = projects.find((p) => p.id === activeProjectId);
+      if (!activeProj) {
+        addToast('Select or add a project first to run Edit Agent.', 'warning');
+        return;
+      }
+
+      if (!activeModel) {
+        addToast('No model loaded. Open Models library to load a GGUF model first.', 'warning');
+        return;
+      }
+
+      if (permissionLevel !== 'EDIT') {
+        setEditPermissionModalOpen(true);
+        return;
+      }
+
+      setIsEditing(true);
+      setActiveTab('chat');
+
+      const userMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: prompt,
+        timestamp: Date.now(),
+      };
+
+      const assistantMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        kind: 'edit-result',
+        isStreaming: true,
+      };
+
+      setChatMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+      if (typeof window !== 'undefined' && window.modelForge?.runEditAgent) {
+        try {
+          const res = await window.modelForge.runEditAgent({
+            projectId: activeProj.id,
+            prompt,
+          });
+          if (res?.runId) {
+            setActiveRunId(res.runId);
+            activeRunIdRef.current = res.runId;
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          addToast(`Edit Agent failed: ${msg}`, 'error');
+          setIsEditing(false);
+          setChatMessages((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                content: `Error: ${msg}`,
+                isStreaming: false,
+              };
+            }
+            return updated;
+          });
+        }
+      }
+    },
+    [activeProjectId, projects, activeModel, permissionLevel, addToast, setActiveTab]
+  );
+
+  const handleStopEditAgent = useCallback(async (): Promise<boolean> => {
+    if (typeof window !== 'undefined' && window.modelForge?.stopEditAgent) {
+      const stopped = await window.modelForge.stopEditAgent();
+      setIsEditing(false);
+      await refreshPendingCheckpointAndDiff();
+      return stopped;
+    }
+    setIsEditing(false);
+    return false;
+  }, [refreshPendingCheckpointAndDiff]);
+
+  const handleAcceptCheckpoint = useCallback(async () => {
+    if (!activeProjectId || !pendingCheckpoint) return;
+    try {
+      await window.modelForge.acceptCheckpoint(pendingCheckpoint.id, activeProjectId);
+      addToast('Changes accepted.', 'success');
+      await refreshPendingCheckpointAndDiff();
+      setFileTreeRefreshCounter((c) => c + 1);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(`Accept failed: ${msg}`, 'error');
+    }
+  }, [activeProjectId, pendingCheckpoint, addToast, refreshPendingCheckpointAndDiff]);
+
+  const handleRollbackCheckpoint = useCallback(async (): Promise<RollbackResult | null> => {
+    if (!activeProjectId || !pendingCheckpoint) return null;
+    try {
+      const result = await window.modelForge.rollbackCheckpoint(pendingCheckpoint.id, activeProjectId);
+      if (result.success) {
+        addToast(`Rollback complete. Restored ${result.restoredFiles.length} file(s).`, 'success');
+        await refreshPendingCheckpointAndDiff();
+        setFileTreeRefreshCounter((c) => c + 1);
+        return result;
+      } else {
+        if (result.conflicts && result.conflicts.length > 0) {
+          addToast(`Rollback conflict: ${result.conflicts[0].reason}`, 'error');
+        } else {
+          addToast(`Rollback failed: ${result.error || 'Unknown error'}`, 'error');
+        }
+        await refreshPendingCheckpointAndDiff();
+        return result;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(`Rollback failed: ${msg}`, 'error');
+      return null;
+    }
+  }, [activeProjectId, pendingCheckpoint, addToast, refreshPendingCheckpointAndDiff]);
+
+  const handleCreateManualCheckpoint = useCallback(
+    async (description?: string): Promise<CheckpointSummary | null> => {
+      if (!activeProjectId) {
+        addToast('No active project selected to create checkpoint.', 'warning');
+        return null;
+      }
+      try {
+        const summary = await window.modelForge.createManualCheckpoint(activeProjectId, description);
+        addToast(
+          `Checkpoint created (${summary.id.slice(0, 16)}...) at ${new Date(summary.timestamp).toLocaleTimeString()}`,
+          'success'
+        );
+        return summary;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addToast(`Checkpoint creation failed: ${msg}`, 'error');
+        return null;
+      }
+    },
+    [activeProjectId, addToast]
+  );
+
+  const dismissRecoveryBanner = useCallback(() => {
+    setIsRecoveryBannerDismissed(true);
+  }, []);
+
   const handleClearAgentActivities = useCallback(() => {
     setAgentActivities([]);
     setAgentPlanState(null);
+    setEditAgentState(null);
     setActiveRunId(null);
     activeRunIdRef.current = null;
   }, []);
@@ -648,7 +925,6 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, []);
 
   return (
-
     <AppStoreContext.Provider
       value={{
         currentPage,
@@ -662,6 +938,13 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         setActiveProjectId: handleSetActiveProjectId,
         addProject: handleAddProject,
         removeProject: handleRemoveProject,
+
+        // Permission Model (Pass 5)
+        permissionLevel,
+        setPermissionLevel,
+        isEditPermissionModalOpen,
+        setEditPermissionModalOpen,
+        confirmEnableEdit,
 
         models,
         modelLibraries,
@@ -697,6 +980,20 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         stopPlanAgent: handleStopPlanAgent,
         clearAgentActivities: handleClearAgentActivities,
 
+        // Edit Agent & Checkpoints (Pass 5)
+        isEditing,
+        editAgentState,
+        pendingCheckpoint,
+        checkpointDiff,
+        runEditAgent: handleRunEditAgent,
+        stopEditAgent: handleStopEditAgent,
+        acceptCheckpoint: handleAcceptCheckpoint,
+        rollbackCheckpoint: handleRollbackCheckpoint,
+        createManualCheckpoint: handleCreateManualCheckpoint,
+        refreshPendingCheckpointAndDiff,
+        dismissRecoveryBanner,
+        isRecoveryBannerDismissed,
+        fileTreeRefreshCounter,
 
         hardwareInfo,
         toasts,

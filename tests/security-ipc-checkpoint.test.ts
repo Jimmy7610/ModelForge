@@ -361,7 +361,8 @@ describe('Pass 5 Security & Checkpoint IPC Hardening', () => {
   // 19. valid Accept still succeeds
   it('19. accepts checkpoint and persists accepted status', async () => {
     const cp = await checkpointService.createPendingCheckpoint('proj-a', 'Accept test', tempProjA);
-    const res = checkpointService.accept(cp.id, 'proj-a', tempProjA);
+    const guardA = new WorkspaceGuard(tempProjA);
+    const res = checkpointService.accept(cp.id, 'proj-a', guardA);
     expect(res.success).toBe(true);
     const manifest = checkpointService.loadManifest('proj-a', cp.id);
     expect(manifest?.status).toBe('accepted');
@@ -380,7 +381,7 @@ describe('Pass 5 Security & Checkpoint IPC Hardening', () => {
     const diff = DiffService.computeCheckpointDiff(
       manifest,
       checkpointService.getCheckpointDir('proj-a', cp.id),
-      tempProjA
+      new WorkspaceGuard(tempProjA)
     );
     expect(diff.totalFilesChanged).toBe(1);
     expect(diff.totalInsertions).toBe(1);
@@ -442,4 +443,200 @@ describe('Pass 5 Security & Checkpoint IPC Hardening', () => {
     expect(resB.success).toBe(false);
     expect(resB.error).toContain('no longer matches the registered project');
   });
+
+  // ─── v0.5.2 NEW TESTS ───────────────────────────────────────────────────────
+
+  it('v0.5.2: rollback() rejects when called without WorkspaceGuard (null)', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'guard test', tempProjA);
+    // @ts-expect-error intentional - test that null guard is rejected
+    const res = checkpointService.rollback(cp.id, 'proj-a', null);
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('WorkspaceGuard');
+  });
+
+  it('v0.5.2: rollback() rejects when called with a string instead of WorkspaceGuard', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'guard test', tempProjA);
+    // @ts-expect-error intentional - test that string is rejected
+    const res = checkpointService.rollback(cp.id, 'proj-a', tempProjA);
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('WorkspaceGuard');
+  });
+
+  it('v0.5.2: accept() throws when called without WorkspaceGuard (null)', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'accept guard test', tempProjA);
+    expect(() =>
+      // @ts-expect-error intentional
+      checkpointService.accept(cp.id, 'proj-a', null)
+    ).toThrow('WorkspaceGuard');
+  });
+
+  it('v0.5.2: accept() throws when called with a string instead of WorkspaceGuard', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'accept guard test', tempProjA);
+    expect(() =>
+      // @ts-expect-error intentional
+      checkpointService.accept(cp.id, 'proj-a', tempProjA)
+    ).toThrow('WorkspaceGuard');
+  });
+
+  it('v0.5.2: manifest.projectRoot cannot become the authority — rollback must verify against registered guard', async () => {
+    // Create a checkpoint on proj-a
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'auth test', tempProjA);
+
+    // Try rollback with guard pointing to a different directory (attacker-controlled path)
+    const attackerGuard = new WorkspaceGuard(tempOutside);
+    const res = checkpointService.rollback(cp.id, 'proj-a', attackerGuard);
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('no longer matches the registered project');
+  });
+
+  it('v0.5.2: diff fails closed on absolute path in manifest', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'diff fail-closed', tempProjA);
+    const manifest = checkpointService.loadManifest('proj-a', cp.id)!;
+    // Inject an absolute path entry
+    const absPath = process.platform === 'win32' ? 'C:\\Windows\\system32\\evil.dll' : '/etc/passwd';
+    (manifest.files as any)[absPath] = {
+      relativePath: absPath,
+      existedBefore: false,
+    };
+    expect(() =>
+      DiffService.computeCheckpointDiff(
+        manifest,
+        checkpointService.getCheckpointDir('proj-a', cp.id),
+        new WorkspaceGuard(tempProjA)
+      )
+    ).toThrow('Checkpoint metadata failed safety validation.');
+  });
+
+  it('v0.5.2: diff fails closed on traversal path in manifest', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'diff traversal', tempProjA);
+    const manifest = checkpointService.loadManifest('proj-a', cp.id)!;
+    (manifest.files as any)['../../outside/secret.txt'] = {
+      relativePath: '../../outside/secret.txt',
+      existedBefore: false,
+    };
+    expect(() =>
+      DiffService.computeCheckpointDiff(
+        manifest,
+        checkpointService.getCheckpointDir('proj-a', cp.id),
+        new WorkspaceGuard(tempProjA)
+      )
+    ).toThrow('Checkpoint metadata failed safety validation.');
+  });
+
+  it('v0.5.2: diff fails closed on null-byte in manifest path', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'diff null-byte', tempProjA);
+    const manifest = checkpointService.loadManifest('proj-a', cp.id)!;
+    (manifest.files as any)['src/\0evil.ts'] = {
+      relativePath: 'src/\0evil.ts',
+      existedBefore: false,
+    };
+    expect(() =>
+      DiffService.computeCheckpointDiff(
+        manifest,
+        checkpointService.getCheckpointDir('proj-a', cp.id),
+        new WorkspaceGuard(tempProjA)
+      )
+    ).toThrow('Checkpoint metadata failed safety validation.');
+  });
+
+  it('v0.5.2: diff fails closed on backup with invalid filename format', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'diff bad-backup', tempProjA);
+    const srcFile = path.join(tempProjA, 'src', 'main.ts');
+    await checkpointService.capturePreMutationSnapshot(cp.id, 'proj-a', 'src/main.ts', srcFile);
+
+    const manifest = checkpointService.loadManifest('proj-a', cp.id)!;
+    // Corrupt backup filename to one that fails regex
+    for (const entry of Object.values(manifest.files)) {
+      if (entry.existedBefore) {
+        (entry as any).backupFileName = '../../etc/passwd';
+      }
+    }
+
+    expect(() =>
+      DiffService.computeCheckpointDiff(
+        manifest,
+        checkpointService.getCheckpointDir('proj-a', cp.id),
+        new WorkspaceGuard(tempProjA)
+      )
+    ).toThrow('Checkpoint backup integrity verification failed.');
+  });
+
+  it('v0.5.2: diff fails closed on backup SHA-256 mismatch (tampered backup)', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'diff sha mismatch', tempProjA);
+    const srcFile = path.join(tempProjA, 'src', 'main.ts');
+    await checkpointService.capturePreMutationSnapshot(cp.id, 'proj-a', 'src/main.ts', srcFile);
+
+    const manifest = checkpointService.loadManifest('proj-a', cp.id)!;
+    const cpDir = checkpointService.getCheckpointDir('proj-a', cp.id);
+    const filesDir = path.join(cpDir, 'files');
+
+    // Tamper the backup file content
+    for (const entry of Object.values(manifest.files)) {
+      if (entry.existedBefore && entry.backupFileName) {
+        const backupPath = path.join(filesDir, entry.backupFileName);
+        fs.writeFileSync(backupPath, 'TAMPERED CONTENT', 'utf8');
+      }
+    }
+
+    expect(() =>
+      DiffService.computeCheckpointDiff(
+        manifest,
+        cpDir,
+        new WorkspaceGuard(tempProjA)
+      )
+    ).toThrow('Checkpoint backup integrity verification failed.');
+  });
+
+  it('v0.5.2: saveManifest never unlinks destination before rename', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'atomic write test', tempProjA);
+    const manifestPath = path.join(tempStorage, 'proj-a', cp.id, 'manifest.json');
+
+    // Confirm manifest exists
+    expect(fs.existsSync(manifestPath)).toBe(true);
+
+    // Write a second time - this exercises the overwrite path
+    const manifest = checkpointService.loadManifest('proj-a', cp.id)!;
+    manifest.description = 'Updated description for atomic test';
+    checkpointService.saveManifest(manifest);
+
+    // File must still exist and be readable
+    expect(fs.existsSync(manifestPath)).toBe(true);
+    const saved = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    expect(saved.description).toBe('Updated description for atomic test');
+    // Content has changed so inode may differ on Windows, but it must be valid JSON
+    expect(saved.id).toBe(cp.id);
+    expect(saved.projectId).toBe('proj-a');
+  });
+
+  it('v0.5.2: saveManifest leaves existing manifest valid when rename would fail (simulated)', async () => {
+    const cp = await checkpointService.createPendingCheckpoint('proj-a', 'rename fail test', tempProjA);
+    const manifestPath = path.join(tempStorage, 'proj-a', cp.id, 'manifest.json');
+    const originalContent = fs.readFileSync(manifestPath, 'utf8');
+    const originalParsed = JSON.parse(originalContent);
+
+    // Spy on fs.renameSync to throw for this specific test
+    const origRename = fs.renameSync.bind(fs);
+    let callCount = 0;
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation((...args) => {
+      callCount++;
+      if (callCount === 1) {
+        throw new Error('Simulated rename failure');
+      }
+      return origRename(...args);
+    });
+
+    const manifest = checkpointService.loadManifest('proj-a', cp.id)!;
+    manifest.description = 'Should not persist';
+    expect(() => checkpointService.saveManifest(manifest)).toThrow('atomically replace');
+
+    renameSpy.mockRestore();
+
+    // Original manifest must still be intact
+    expect(fs.existsSync(manifestPath)).toBe(true);
+    const afterContent = fs.readFileSync(manifestPath, 'utf8');
+    const afterParsed = JSON.parse(afterContent);
+    expect(afterParsed.id).toBe(originalParsed.id);
+    expect(afterParsed.description).not.toBe('Should not persist');
+  });
 });
+

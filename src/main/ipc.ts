@@ -631,7 +631,7 @@ export function registerIpcHandlers(
       throw new Error(`Checkpoint not found: ${checkpointId}`);
     }
     const checkpointDir = checkpointService.getCheckpointDir(project.id, checkpointId);
-    return DiffService.computeCheckpointDiff(manifest, checkpointDir, registeredRoot);
+    return DiffService.computeCheckpointDiff(manifest, checkpointDir, new WorkspaceGuard(registeredRoot));
   });
 
   ipcMain.handle(IPC_CHANNELS.ACCEPT_CHECKPOINT, (_event, payload: unknown) => {
@@ -654,7 +654,7 @@ export function registerIpcHandlers(
       throw new Error(`Project not found: ${projectId}`);
     }
     const registeredRoot = project.rootPath || project.path;
-    return checkpointService.accept(checkpointId, project.id, registeredRoot);
+    return checkpointService.accept(checkpointId, project.id, new WorkspaceGuard(registeredRoot));
   });
 
   ipcMain.handle(IPC_CHANNELS.ROLLBACK_CHECKPOINT, (_event, payload: unknown) => {

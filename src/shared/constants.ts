@@ -1,6 +1,6 @@
 import { AppSettings } from './types';
 
-export const APP_VERSION = '0.5.1';
+export const APP_VERSION = '0.5.2';
 export const SCHEMA_VERSION = 2;
 export const CHECKPOINT_SCHEMA_VERSION = 1;
 

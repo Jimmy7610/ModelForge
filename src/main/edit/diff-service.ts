@@ -21,20 +21,28 @@ export class DiffService {
   /**
    * Compares the baseline files in a checkpoint manifest against the current files
    * on disk in the project root, returning a detailed CheckpointDiffResult.
+   *
+   * SECURITY ENFORCEMENTS:
+   * 1. authoritativeTarget is REQUIRED - manifest.projectRoot is verified but never trusted as authority.
+   * 2. Any unsafe manifest path (traversal, absolute, null bytes, colons, guard rejection) FAILS CLOSED.
+   * 3. Backup filename validated and SHA-256 verified for ALL existing files before diff is computed.
+   *    A tampered backup produces "Checkpoint backup integrity verification failed." - no partial diff.
    */
   public static computeCheckpointDiff(
     manifest: CheckpointManifest,
     checkpointDir: string,
-    projectRoot: string,
-    guard?: WorkspaceGuard
+    authoritativeTarget: WorkspaceGuard | string
   ): CheckpointDiffResult {
-    const canonicalTarget = path.resolve(projectRoot);
+    const guard =
+      authoritativeTarget instanceof WorkspaceGuard
+        ? authoritativeTarget
+        : new WorkspaceGuard(path.resolve(authoritativeTarget));
+
     const canonicalManifestRoot = path.resolve(manifest.projectRoot);
-    if (canonicalTarget !== canonicalManifestRoot) {
+    if (guard.canonicalRootPath !== canonicalManifestRoot) {
       throw new Error('Checkpoint workspace location no longer matches the registered project.');
     }
 
-    const activeGuard = guard || new WorkspaceGuard(canonicalTarget);
     const fileItems: FileDiffItem[] = [];
     let totalInsertions = 0;
     let totalDeletions = 0;
@@ -42,24 +50,28 @@ export class DiffService {
     const filesDir = path.join(checkpointDir, 'files');
 
     for (const [relPath, entry] of Object.entries(manifest.files)) {
+      // FAIL CLOSED: any invalid path in manifest throws immediately
       if (
         !relPath ||
         typeof relPath !== 'string' ||
         path.isAbsolute(relPath) ||
         relPath.includes('..') ||
         relPath.includes('\0') ||
-        relPath.includes(':')
+        relPath.includes(':') ||
+        relPath.includes('%')
       ) {
-        continue;
+        throw new Error('Checkpoint metadata failed safety validation.');
       }
 
       let currentDiskPath: string;
       try {
-        const readCheck = activeGuard.resolveReadPath(relPath);
-        if (!readCheck.allowed) continue;
+        const readCheck = guard.resolveReadPath(relPath);
+        if (!readCheck.allowed) {
+          throw new Error(`Path failed workspace containment: ${relPath}`);
+        }
         currentDiskPath = readCheck.canonicalPath;
       } catch {
-        continue;
+        throw new Error('Checkpoint metadata failed safety validation.');
       }
 
       const currentExists = fs.existsSync(currentDiskPath);
@@ -78,14 +90,14 @@ export class DiffService {
             hasOverallConflict = true;
           }
         } catch {
-          // Ignore read error for conflict check
+          // Ignore read error for conflict check only
         }
       }
 
       if (!entry.existedBefore) {
         // Created file scenario
         if (!currentExists) {
-          // Created by agent then deleted externally or not yet written
+          // Created by agent then deleted externally - skip
           continue;
         }
 
@@ -119,20 +131,37 @@ export class DiffService {
 
         totalInsertions += insertions;
       } else {
-        // Existed before scenario
-        let backupPath: string | null = null;
-        if (entry.backupFileName && /^[a-f0-9]{64}\.bak$/.test(entry.backupFileName)) {
-          const resolved = path.resolve(filesDir, entry.backupFileName);
-          const rel = path.relative(filesDir, resolved);
-          if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
-            backupPath = resolved;
+        // Existed before scenario - MUST validate backup filename and SHA-256 integrity
+        if (!entry.backupFileName) {
+          throw new Error('Checkpoint backup integrity verification failed.');
+        }
+
+        // Validate backup filename format
+        if (!/^[a-f0-9]{64}\.bak$/.test(entry.backupFileName)) {
+          throw new Error('Checkpoint backup integrity verification failed.');
+        }
+
+        // Validate backup path containment
+        const backupResolved = path.resolve(filesDir, entry.backupFileName);
+        const backupRel = path.relative(filesDir, backupResolved);
+        if (backupRel.startsWith('..') || path.isAbsolute(backupRel)) {
+          throw new Error('Checkpoint backup integrity verification failed.');
+        }
+
+        if (!fs.existsSync(backupResolved)) {
+          throw new Error('Checkpoint backup integrity verification failed.');
+        }
+
+        // Read backup and verify SHA-256 integrity
+        const backupBytes = fs.readFileSync(backupResolved);
+        if (entry.originalSha256) {
+          const backupHash = crypto.createHash('sha256').update(backupBytes).digest('hex');
+          if (backupHash !== entry.originalSha256) {
+            throw new Error('Checkpoint backup integrity verification failed.');
           }
         }
 
-        let originalContent = '';
-        if (backupPath && fs.existsSync(backupPath)) {
-          originalContent = fs.readFileSync(backupPath, 'utf8');
-        }
+        const originalContent = backupBytes.toString('utf8');
 
         if (!currentExists) {
           // Deleted file scenario

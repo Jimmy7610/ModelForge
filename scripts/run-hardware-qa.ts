@@ -178,7 +178,7 @@ async function main() {
   const s1Diff = DiffService.computeCheckpointDiff(
     s1Manifest,
     checkpointService.getCheckpointDir(qaProject.id, s1CheckpointId),
-    qaDir
+    new WorkspaceGuard(qaDir)
   );
   console.log(`[S1] Checkpoint Diff: ${s1Diff.totalFilesChanged} file(s) changed, +${s1Diff.totalInsertions}/-${s1Diff.totalDeletions}`);
   for (const fileDiff of s1Diff.files) {
@@ -251,7 +251,7 @@ export function multiply(a: number, b: number): number {
 
   // Accept Checkpoint
   console.log('[S2] Accepting Checkpoint...');
-  await checkpointService.acceptCheckpoint(s2CheckpointId, qaProject.id);
+  await checkpointService.acceptCheckpoint(s2CheckpointId, qaProject.id, new WorkspaceGuard(qaDir));
   const s2ManifestAfter = await checkpointService.getManifest(s2CheckpointId, qaProject.id);
   if (s2ManifestAfter?.status !== 'accepted') {
     throw new Error(`Scenario 2 failed: Checkpoint status is ${s2ManifestAfter?.status}, expected accepted!`);

@@ -716,9 +716,9 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         addToast(`Failed to enable Edit mode: ${msg}`, 'error');
       }
     } else {
-      setPermissionLevel('EDIT');
+      setPermissionLevel('READ');
       setEditPermissionModalOpen(false);
-      addToast('Edit mode enabled for active project in this session.', 'info');
+      addToast('Desktop integration unavailable. Edit mode could not be enabled.', 'error');
     }
   }, [activeProjectId, addToast]);
 

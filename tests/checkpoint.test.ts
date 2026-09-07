@@ -165,8 +165,8 @@ describe('CheckpointService & Safe Rollback (Pass 5)', () => {
   it('enforces retention policy keeping at most 5 checkpoints per project', async () => {
     const ids: string[] = [];
     for (let i = 0; i < 7; i++) {
-      const cp = await checkpointService.createPendingCheckpoint(projectId, `Checkpoint ${i}`);
-      await checkpointService.acceptCheckpoint(cp.id, projectId);
+      const cp = await checkpointService.createPendingCheckpoint(projectId, `Checkpoint ${i}`, tempWorkspace);
+      await checkpointService.acceptCheckpoint(cp.id, projectId, guard);
       ids.push(cp.id);
       // Ensure distinct timestamps
       await new Promise((resolve) => setTimeout(resolve, 10));

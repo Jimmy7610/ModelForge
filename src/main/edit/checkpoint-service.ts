@@ -218,17 +218,17 @@ export class CheckpointService {
   public async rollbackCheckpoint(
     checkpointId: string,
     projectId: string,
-    guard?: WorkspaceGuard | string
+    authoritativeGuard: WorkspaceGuard
   ): Promise<RollbackResult> {
-    return this.rollback(checkpointId, projectId, guard);
+    return this.rollback(checkpointId, projectId, authoritativeGuard);
   }
 
   public async acceptCheckpoint(
     checkpointId: string,
     projectId: string,
-    target?: WorkspaceGuard | string
+    authoritativeGuard: WorkspaceGuard
   ): Promise<void> {
-    const res = this.accept(checkpointId, projectId, target);
+    const res = this.accept(checkpointId, projectId, authoritativeGuard);
     if (!res.success) {
       throw new CheckpointError(`Failed to accept checkpoint: ${checkpointId}`);
     }
@@ -357,6 +357,18 @@ export class CheckpointService {
 
   /**
    * Saves the manifest to disk atomically using a temp file and rename.
+   *
+   * WINDOWS SAFETY: Node.js fs.renameSync on Windows CAN atomically replace an existing
+   * destination file without deleting it first (verified with Node runtime). We NEVER
+   * unlink the destination before rename — that would create a crash window where no valid
+   * manifest exists on disk.
+   *
+   * Flow:
+   *   1. Write to temp file in same directory (same filesystem = atomic rename)
+   *   2. fsync the file descriptor for durability
+   *   3. Close the file descriptor
+   *   4. Atomically rename temp over destination (replaces atomically on Windows)
+   *   5. Cleanup temp only on failure — never delete destination first
    */
   public saveManifest(manifest: CheckpointManifest): void {
     const manifestPath = this.getManifestPath(manifest.projectId, manifest.id);
@@ -366,24 +378,35 @@ export class CheckpointService {
     }
 
     const tempPath = path.join(dir, `manifest.tmp.${Date.now()}.${crypto.randomBytes(4).toString('hex')}`);
-    fs.writeFileSync(tempPath, JSON.stringify(manifest, null, 2), 'utf8');
 
+    // Step 1-3: Write, fsync, close via fd
+    let fd: number | undefined;
     try {
-      if (process.platform === 'win32' && fs.existsSync(manifestPath)) {
-        try {
-          fs.unlinkSync(manifestPath);
-        } catch {
-          // ignore unlink error before rename
-        }
+      fd = fs.openSync(tempPath, 'w');
+      const content = Buffer.from(JSON.stringify(manifest, null, 2), 'utf8');
+      fs.writeSync(fd, content);
+      try {
+        fs.fsyncSync(fd);
+      } catch {
+        // fsync may fail on some virtual filesystems - non-fatal for correctness
       }
+      fs.closeSync(fd);
+      fd = undefined;
+    } catch (err) {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch { /* ignore */ }
+      }
+      try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch { /* ignore */ }
+      throw new CheckpointError(`Failed to write checkpoint manifest temp file: ${err}`);
+    }
+
+    // Step 4: Atomic rename — never unlink destination first
+    try {
       fs.renameSync(tempPath, manifestPath);
     } catch (err) {
-      try {
-        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-      } catch {
-        // ignore cleanup error
-      }
-      throw new CheckpointError(`Failed to atomically save checkpoint manifest: ${err}`);
+      // Rename failed — original manifest is untouched, clean up temp
+      try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch { /* ignore */ }
+      throw new CheckpointError(`Failed to atomically replace checkpoint manifest: ${err}`);
     }
   }
 
@@ -430,26 +453,35 @@ export class CheckpointService {
 
   /**
    * Marks a pending checkpoint as accepted after validating registered project authority.
+   * authoritativeGuard is MANDATORY - manifest.projectRoot is never trusted as authority.
    */
   public accept(
     checkpointId: string,
     projectId: string,
-    authoritativeTarget?: WorkspaceGuard | string
+    authoritativeGuard: WorkspaceGuard
   ): { success: boolean } {
+    if (!(authoritativeGuard instanceof WorkspaceGuard)) {
+      throw new CheckpointError(
+        'accept() requires a mandatory WorkspaceGuard constructed from the registered project. manifest.projectRoot is not a security authority.'
+      );
+    }
+
     const manifest = this.loadManifest(projectId, checkpointId);
     if (!manifest) {
       throw new CheckpointError(`Checkpoint not found: ${checkpointId}`);
     }
 
-    if (authoritativeTarget) {
-      const canonicalTarget =
-        authoritativeTarget instanceof WorkspaceGuard
-          ? authoritativeTarget.canonicalRootPath
-          : path.resolve(authoritativeTarget);
-      const canonicalManifestRoot = path.resolve(manifest.projectRoot);
-      if (canonicalTarget !== canonicalManifestRoot) {
-        throw new CheckpointError('Checkpoint workspace location no longer matches the registered project.');
-      }
+    // Verify manifest belongs to the requested project (namespace)
+    if (manifest.projectId !== projectId) {
+      throw new CheckpointError(
+        `Checkpoint project mismatch: manifest belongs to "${manifest.projectId}", not "${projectId}"`
+      );
+    }
+
+    // Verify authoritative guard root matches manifest root exactly
+    const canonicalManifestRoot = path.resolve(manifest.projectRoot);
+    if (authoritativeGuard.canonicalRootPath !== canonicalManifestRoot) {
+      throw new CheckpointError('Checkpoint workspace location no longer matches the registered project.');
     }
 
     manifest.status = 'accepted';
@@ -468,12 +500,26 @@ export class CheckpointService {
    * 3. Backup file names must match strict format ^[a-f0-9]{64}\.bak$ and resolve strictly inside files/.
    * 4. Backup SHA-256 integrity is checked before restoration.
    * 5. Preflight is ALL-OR-NOTHING: any conflict or validation failure aborts before ANY file is modified.
+   * 6. authoritativeGuard is MANDATORY - manifest.projectRoot is NEVER used as security authority.
    */
   public rollback(
     checkpointId: string,
     projectId: string,
-    authoritativeTarget?: WorkspaceGuard | string
+    authoritativeGuard: WorkspaceGuard
   ): RollbackResult {
+    // Guard must be a real WorkspaceGuard from the registered project
+    if (!(authoritativeGuard instanceof WorkspaceGuard)) {
+      return {
+        success: false,
+        checkpointId,
+        restoredFiles: [],
+        deletedCreatedFiles: [],
+        cleanedDirs: [],
+        conflicts: [],
+        error: 'rollback() requires a mandatory WorkspaceGuard from the registered project. manifest.projectRoot is not a security authority.',
+      };
+    }
+
     let manifest: CheckpointManifest | null = null;
     try {
       manifest = this.loadManifest(projectId, checkpointId);
@@ -501,15 +547,20 @@ export class CheckpointService {
       };
     }
 
-    let guard: WorkspaceGuard;
-    if (authoritativeTarget instanceof WorkspaceGuard) {
-      guard = authoritativeTarget;
-    } else if (typeof authoritativeTarget === 'string') {
-      guard = new WorkspaceGuard(authoritativeTarget);
-    } else {
-      guard = new WorkspaceGuard(manifest.projectRoot);
+    // Verify manifest belongs to the requested project namespace
+    if (manifest.projectId !== projectId) {
+      return {
+        success: false,
+        checkpointId,
+        restoredFiles: [],
+        deletedCreatedFiles: [],
+        cleanedDirs: [],
+        conflicts: [],
+        error: `Checkpoint project mismatch: manifest belongs to "${manifest.projectId}", not "${projectId}"`,
+      };
     }
 
+    const guard = authoritativeGuard;
     const canonicalTarget = guard.canonicalRootPath;
     const canonicalManifestRoot = path.resolve(manifest.projectRoot);
     if (canonicalTarget !== canonicalManifestRoot) {

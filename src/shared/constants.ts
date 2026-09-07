@@ -52,6 +52,7 @@ export const IPC_CHANNELS = {
   AGENT_ACTIVITY: 'modelforge:agent-activity',
   AGENT_CHUNK: 'modelforge:agent-chunk',
   AGENT_STATE_CHANGED: 'modelforge:agent-state-changed',
+  CHECK_TOOL_CAPABILITY: 'modelforge:check-tool-capability',
 
   // Read-Only Workspace Inspection Tools
   GET_PROJECT_OVERVIEW: 'modelforge:get-project-overview',

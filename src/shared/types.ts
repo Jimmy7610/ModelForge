@@ -164,6 +164,17 @@ export interface SendChatMessagePayload {
   maxTokens?: number;
 }
 
+export type ToolCompatibilityStatus = 'unknown' | 'testing' | 'supported' | 'unsupported';
+
+export interface ToolCapabilityInfo {
+  status: ToolCompatibilityStatus;
+  testedAt?: string;
+  wrapperName?: string;
+  isJinja?: boolean;
+  usingNoJinjaFallback?: boolean;
+  reason?: string;
+}
+
 export interface InferenceState {
   runtime: InferenceRuntimeInfo;
   modelState: ModelLoadStatus;
@@ -171,6 +182,7 @@ export interface InferenceState {
   generationState: ChatGenerationStatus;
   activeRequestId: string | null;
   errorMessage?: string;
+  toolCapability?: ToolCapabilityInfo;
 }
 
 export interface ChatMessage {
@@ -202,7 +214,20 @@ export interface AgentActivityItem {
   toolArgs?: Record<string, unknown>;
 }
 
-export type AgentPlanStatus = 'idle' | 'running' | 'completed' | 'error';
+export type AgentPlanStatus = 'idle' | 'running' | 'completed' | 'error' | 'incomplete';
+
+export interface PlanExecutionSummary {
+  totalToolCalls: number;
+  successfulToolCalls: number;
+  failedToolCalls: number;
+  blockedToolCalls: number;
+  distinctToolTypes: number;
+  distinctToolNames: string[];
+  filesRead: string[];
+  searchesPerformed: string[];
+  durationMs: number;
+  isFullyInspected: boolean;
+}
 
 export interface AgentPlanState {
   runId: string | null;
@@ -213,6 +238,7 @@ export interface AgentPlanState {
   planContent?: string;
   error?: string;
   successfulToolCallsCount?: number;
+  toolSummary?: PlanExecutionSummary;
 }
 
 export interface RunPlanPayload {
@@ -257,6 +283,7 @@ export interface ModelForgeAPI {
   runPlanAgent: (payload: RunPlanPayload) => Promise<{ success: boolean; runId: string; sessionId: string }>;
   stopPlanAgent: () => Promise<boolean>;
   getAgentState: () => Promise<AgentPlanState>;
+  checkToolCapability: (modelId?: string) => Promise<ToolCapabilityInfo>;
   onAgentActivity: (callback: (activity: AgentActivityItem) => void) => () => void;
   onAgentChunk: (callback: (chunk: ChatGenerationChunk) => void) => () => void;
   onAgentStateChange: (callback: (state: AgentPlanState) => void) => () => void;

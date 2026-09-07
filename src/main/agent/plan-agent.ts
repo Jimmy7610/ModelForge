@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { AgentActivityItem, AgentPlanState, Project } from '../../shared/types';
+import { AgentActivityItem, AgentPlanState, PlanExecutionSummary, Project } from '../../shared/types';
 import { WorkspaceGuard } from '../workspace/guard';
 import { WorkspaceTools } from '../workspace/tools';
 import { InferenceService } from '../inference/service';
@@ -16,6 +16,7 @@ export class PlanAgent {
   private planContent = '';
   private error?: string;
   private successfulToolCallsCount = 0;
+  private toolSummary?: PlanExecutionSummary;
   private abortController: AbortController | null = null;
 
   constructor(inferenceService: InferenceService) {
@@ -32,6 +33,7 @@ export class PlanAgent {
       planContent: this.planContent,
       error: this.error,
       successfulToolCallsCount: this.successfulToolCallsCount,
+      toolSummary: this.toolSummary ? { ...this.toolSummary } : undefined,
     };
   }
 
@@ -57,6 +59,7 @@ export class PlanAgent {
     this.error = undefined;
     this.currentActivity = undefined;
     this.successfulToolCallsCount = 0;
+    this.toolSummary = undefined;
     this.activeRunId = null;
   }
 
@@ -83,6 +86,14 @@ export class PlanAgent {
       throw new Error('No model loaded. Please load a local GGUF model in the Models library first.');
     }
 
+    // Gating: check model capability before planning
+    const capability = await this.inferenceService.getToolCapability();
+    if (capability.status === 'unsupported') {
+      throw new Error(
+        `This model could not use Model Forge project tools reliably (${capability.reason || 'unsupported'}). Please select a tool-compatible model.`
+      );
+    }
+
     const currentRunId = runId || crypto.randomUUID();
     this.activeRunId = currentRunId;
     this.status = 'running';
@@ -91,9 +102,18 @@ export class PlanAgent {
     this.planContent = '';
     this.error = undefined;
     this.successfulToolCallsCount = 0;
+    this.toolSummary = undefined;
     this.abortController = new AbortController();
 
     const budget = new AgentBudget();
+    const startTime = Date.now();
+    let totalToolCalls = 0;
+    let successfulToolCalls = 0;
+    let failedToolCalls = 0;
+    let blockedToolCalls = 0;
+    const distinctToolNames = new Set<string>();
+    const filesRead: string[] = [];
+    const searchesPerformed: string[] = [];
 
     const notifyState = () => {
       if (callbacks?.onStateChange) {
@@ -182,23 +202,28 @@ export class PlanAgent {
               properties: {},
             },
             handler: async () => {
+              totalToolCalls++;
+              distinctToolNames.add('get_project_overview');
+              const act = recordActivity('Inspecting project overview...', 'get_project_overview');
+
               const budgetCheck = budget.checkBudget();
               if (!budgetCheck.allowed) {
-                const act = recordActivity('Inspected project overview', 'get_project_overview');
-                act.blocked(budgetCheck.reason || 'Budget exceeded');
+                blockedToolCalls++;
+                act.blocked(budgetCheck.reason || 'Budget exceeded', 'Inspected project overview');
                 return JSON.stringify({ error: budgetCheck.reason, blocked: true, budgetExceeded: true });
               }
 
-              const act = recordActivity('Inspected project overview', 'get_project_overview');
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Planning cancelled');
                 const res = await tools.getProjectOverview();
                 const bounded = budget.boundToolOutput(JSON.stringify(res, null, 2));
                 budget.recordToolCall(bounded.content.length);
-                this.successfulToolCallsCount++;
+                successfulToolCalls++;
+                this.successfulToolCallsCount = successfulToolCalls;
                 act.done(`${res.name} (${res.languages.join(', ') || 'General'})`, 'Inspected project overview');
                 return bounded.content;
               } catch (err) {
+                failedToolCalls++;
                 const msg = err instanceof Error ? err.message : String(err);
                 act.fail(msg, 'Inspected project overview');
                 return JSON.stringify({ error: msg });
@@ -216,18 +241,20 @@ export class PlanAgent {
               },
             },
             handler: async (args: { path?: string; recursive?: boolean }) => {
+              totalToolCalls++;
+              distinctToolNames.add('list_directory');
               const targetPath = args?.path || '';
               const displayTarget = targetPath.trim() === '' || targetPath === '.' ? 'project root' : targetPath;
               const displayLabel = `Listed ${displayTarget}`;
+              const act = recordActivity(`Listing ${displayTarget}...`, 'list_directory', args);
 
               const budgetCheck = budget.checkBudget();
               if (!budgetCheck.allowed) {
-                const act = recordActivity(displayLabel, 'list_directory', args);
-                act.blocked(budgetCheck.reason || 'Budget exceeded');
+                blockedToolCalls++;
+                act.blocked(budgetCheck.reason || 'Budget exceeded', displayLabel);
                 return JSON.stringify({ error: budgetCheck.reason, blocked: true, budgetExceeded: true });
               }
 
-              const act = recordActivity(displayLabel, 'list_directory', args);
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Planning cancelled');
                 const res = await tools.listDirectory({
@@ -244,15 +271,18 @@ export class PlanAgent {
                   ignored: e.isIgnored,
                 })), null, 2));
                 budget.recordToolCall(bounded.content.length);
-                this.successfulToolCallsCount++;
+                successfulToolCalls++;
+                this.successfulToolCallsCount = successfulToolCalls;
                 act.done(summary, displayLabel);
                 return bounded.content;
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 const isBlocked = msg.includes('jail') || msg.includes('denied') || msg.includes('sensitive');
                 if (isBlocked) {
+                  blockedToolCalls++;
                   act.blocked(msg, displayLabel);
                 } else {
+                  failedToolCalls++;
                   act.fail(msg, displayLabel);
                 }
                 return JSON.stringify({ error: msg, blocked: isBlocked });
@@ -272,35 +302,44 @@ export class PlanAgent {
               required: ['path'],
             },
             handler: async (args: { path: string; startLine?: number; endLine?: number }) => {
-              const displayLabel = `Read ${args.path}`;
+              totalToolCalls++;
+              distinctToolNames.add('read_file');
+              if (args?.path && !filesRead.includes(args.path)) {
+                filesRead.push(args.path);
+              }
+              const displayLabel = `Read ${args?.path}`;
+              const act = recordActivity(`Reading ${args?.path}...`, 'read_file', args);
 
               const budgetCheck = budget.checkBudget();
               if (!budgetCheck.allowed) {
-                const act = recordActivity(displayLabel, 'read_file', args);
-                act.blocked(budgetCheck.reason || 'Budget exceeded');
+                blockedToolCalls++;
+                act.blocked(budgetCheck.reason || 'Budget exceeded', displayLabel);
                 return JSON.stringify({ error: budgetCheck.reason, blocked: true, budgetExceeded: true });
               }
 
-              const act = recordActivity(displayLabel, 'read_file', args);
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Planning cancelled');
                 const res = await tools.readFile(args);
                 if (res.isBinary) {
+                  blockedToolCalls++;
                   act.blocked('Binary file cannot be displayed', displayLabel);
                   return JSON.stringify({ error: 'Binary file cannot be displayed in text viewer', isBinary: true });
                 }
 
                 const bounded = budget.boundToolOutput(res.content);
                 budget.recordToolCall(bounded.content.length);
-                this.successfulToolCallsCount++;
+                successfulToolCalls++;
+                this.successfulToolCallsCount = successfulToolCalls;
                 act.done(`${res.totalLines} lines`, displayLabel);
                 return bounded.content;
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 const isBlocked = msg.includes('jail') || msg.includes('denied') || msg.includes('sensitive');
                 if (isBlocked) {
+                  blockedToolCalls++;
                   act.blocked(msg, displayLabel);
                 } else {
+                  failedToolCalls++;
                   act.fail(msg, displayLabel);
                 }
                 return JSON.stringify({ error: msg, blocked: isBlocked });
@@ -319,27 +358,32 @@ export class PlanAgent {
               required: ['query'],
             },
             handler: async (args: { query: string; path?: string }) => {
-              let searchTerm = args.query;
+              totalToolCalls++;
+              distinctToolNames.add('search_text');
+              let searchTerm = args?.query || '';
               if (searchTerm.endsWith('ies') && searchTerm.length > 5) {
                 searchTerm = searchTerm.slice(0, -3) + 'y';
               } else if (searchTerm.endsWith('s') && !searchTerm.endsWith('ss') && searchTerm.length > 4) {
                 searchTerm = searchTerm.slice(0, -1);
               }
+              if (searchTerm && !searchesPerformed.includes(searchTerm)) {
+                searchesPerformed.push(searchTerm);
+              }
               const displayLabel = `Searched "${searchTerm}"`;
+              const act = recordActivity(`Searching "${searchTerm}"...`, 'search_text', args);
 
               const budgetCheck = budget.checkBudget();
               if (!budgetCheck.allowed) {
-                const act = recordActivity(displayLabel, 'search_text', args);
-                act.blocked(budgetCheck.reason || 'Budget exceeded');
+                blockedToolCalls++;
+                act.blocked(budgetCheck.reason || 'Budget exceeded', displayLabel);
                 return JSON.stringify({ error: budgetCheck.reason, blocked: true, budgetExceeded: true });
               }
 
-              const act = recordActivity(displayLabel, 'search_text', args);
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Planning cancelled');
                 const res = await tools.searchText({
                   query: searchTerm,
-                  path: args.path,
+                  path: args?.path,
                   maxMatches: budget.limits.maxSearchResultsPerCall,
                 });
                 const bounded = budget.boundToolOutput(JSON.stringify({
@@ -347,15 +391,18 @@ export class PlanAgent {
                   matches: res.matches,
                 }, null, 2));
                 budget.recordToolCall(bounded.content.length);
-                this.successfulToolCallsCount++;
+                successfulToolCalls++;
+                this.successfulToolCallsCount = successfulToolCalls;
                 act.done(`${res.totalMatches} matches`, displayLabel);
                 return bounded.content;
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 const isBlocked = msg.includes('jail') || msg.includes('denied') || msg.includes('sensitive');
                 if (isBlocked) {
+                  blockedToolCalls++;
                   act.blocked(msg, displayLabel);
                 } else {
+                  failedToolCalls++;
                   act.fail(msg, displayLabel);
                 }
                 return JSON.stringify({ error: msg, blocked: isBlocked });
@@ -403,8 +450,6 @@ PROJECT CONTEXT:
       this.currentActivity = 'Model analyzing project...';
       notifyState();
 
-      const actPlan = recordActivity('Created architecture plan');
-
       const generatedPlan = await this.inferenceService.executeAgentPrompt({
         prompt: synthesisPrompt,
         systemPrompt: systemInstruction,
@@ -425,18 +470,49 @@ PROJECT CONTEXT:
 
       this.planContent = generatedPlan || this.planContent;
 
-      // Tool use verification: warn user if model failed/refused to call tools
-      if (this.successfulToolCallsCount === 0) {
-        const warningNotice = '\n\n> ⚠️ This model did not successfully inspect the project with tools. Try another instruction-tuned or coding model.';
-        this.planContent += warningNotice;
-        this.currentActivity = 'This model did not successfully inspect the project with tools.';
+      const durationMs = Date.now() - startTime;
+      const distinctToolTypes = distinctToolNames.size;
+      const isFullyInspected = successfulToolCalls >= 3 && distinctToolTypes >= 2;
+
+      this.toolSummary = {
+        totalToolCalls,
+        successfulToolCalls,
+        failedToolCalls,
+        blockedToolCalls,
+        distinctToolTypes,
+        distinctToolNames: Array.from(distinctToolNames),
+        filesRead,
+        searchesPerformed,
+        durationMs,
+        isFullyInspected,
+      };
+
+      const actPlan = recordActivity('Created architecture plan');
+
+      if (!isFullyInspected) {
+        this.status = 'incomplete';
+        if (successfulToolCalls === 0) {
+          const warningNotice = '\n\n> ⚠️ This model did not successfully inspect the project with tools. Inspection incomplete (0 tool calls executed). Try another instruction-tuned or coding model.';
+          this.planContent += warningNotice;
+          this.currentActivity = 'This model did not successfully inspect the project with tools.';
+        } else {
+          const warningNotice = `\n\n> ⚠️ Inspection incomplete: The model did not inspect enough project context (${successfulToolCalls} tool call(s) executed across ${distinctToolTypes} tool type(s); required >= 3 calls across >= 2 types). Some architectural conclusions may be unverified.`;
+          this.planContent += warningNotice;
+          this.currentActivity = `Inspection incomplete: executed ${successfulToolCalls} tool call(s) across ${distinctToolTypes} tool type(s).`;
+        }
+        actPlan.done(
+          `Inspection incomplete: ${successfulToolCalls} tool call(s) across ${distinctToolTypes} type(s) (minimum: 3 calls, 2 types)`,
+          'Created architecture plan'
+        );
       } else {
-        this.currentActivity = `Plan completed successfully (${this.successfulToolCallsCount} tool calls executed).`;
+        this.status = 'completed';
+        this.currentActivity = `Plan completed successfully (${successfulToolCalls} tool calls executed across ${distinctToolTypes} tool types).`;
+        actPlan.done(
+          `${successfulToolCalls} tool calls executed across ${distinctToolTypes} tool types`,
+          'Created architecture plan'
+        );
       }
 
-      actPlan.done();
-
-      this.status = 'completed';
       notifyState();
 
       callbacks?.onChunk?.({

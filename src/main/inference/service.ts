@@ -10,10 +10,12 @@ import {
   InferenceState,
   ModelLoadStatus,
   SendChatMessagePayload,
+  ToolCapabilityInfo,
 } from '../../shared/types';
 import { DEFAULT_CONTEXT_TOKENS, MAX_PROMPT_CHARS } from '../../shared/constants';
 import { ModelRegistry } from '../models/registry';
 import { getInferenceRuntimeInfo, getOrCreateLlamaInstance } from './runtime';
+import { ToolCallingCompatibility } from './compatibility';
 
 export class InferenceService {
   private registry: ModelRegistry;
@@ -27,6 +29,7 @@ export class InferenceService {
   private loadedContext: LlamaContext | null = null;
   private chatSession: LlamaChatSession | null = null;
   private activeAbortController: AbortController | null = null;
+  private compatibility = new ToolCallingCompatibility();
 
   private onChunkCallback?: (chunk: ChatGenerationChunk) => void;
   private onStateChangeCallback?: (state: InferenceState) => void;
@@ -52,6 +55,10 @@ export class InferenceService {
 
   public async getState(): Promise<InferenceState> {
     const runtime = await getInferenceRuntimeInfo();
+    const toolCapability = this.activeModel?.modelId
+      ? this.compatibility.getCachedCapability(this.activeModel.modelId)
+      : undefined;
+
     return {
       runtime,
       modelState: this.modelState,
@@ -59,7 +66,36 @@ export class InferenceService {
       generationState: this.generationState,
       activeRequestId: this.activeRequestId,
       errorMessage: this.errorMessage,
+      toolCapability,
     };
+  }
+
+  public async getToolCapability(modelId?: string): Promise<ToolCapabilityInfo> {
+    const targetModelId = modelId || this.activeModel?.modelId;
+    if (!targetModelId) {
+      return { status: 'unknown' };
+    }
+
+    const cached = this.compatibility.getCachedCapability(targetModelId);
+    if (cached.status !== 'unknown') {
+      return cached;
+    }
+
+    if (this.loadedModel && this.loadedContext && this.activeModel?.modelId === targetModelId) {
+      const probeResult = await this.compatibility.probeModelToolCapability(
+        this.loadedModel,
+        this.loadedContext,
+        targetModelId
+      );
+      await this.notifyStateChange();
+      return probeResult;
+    }
+
+    return cached;
+  }
+
+  public getCompatibilityManager(): ToolCallingCompatibility {
+    return this.compatibility;
   }
 
   public async getRuntimeInfo(): Promise<InferenceRuntimeInfo> {
@@ -231,6 +267,7 @@ export class InferenceService {
       this.activeModel = null;
       this.modelState = 'unloaded';
       this.errorMessage = undefined;
+      this.compatibility.resetAll();
       console.info('[ModelForge Inference] Model unloaded successfully');
       await this.notifyStateChange();
       return true;
@@ -457,11 +494,26 @@ export class InferenceService {
     let agentSession: any = null;
 
     try {
-      // 1. Allocate an isolated sequence or context for this agent execution
+      // 1. Resolve verified agent chatWrapper for the active model
+      let agentWrapper: any = undefined;
+      if (this.loadedModel && this.activeModel?.modelId) {
+        const currentCapability = this.compatibility.getCachedCapability(this.activeModel.modelId);
+        if (currentCapability.status === 'unknown' && this.loadedContext) {
+          await this.compatibility.probeModelToolCapability(
+            this.loadedModel,
+            this.loadedContext,
+            this.activeModel.modelId
+          );
+        }
+        agentWrapper = this.compatibility.resolveAgentChatWrapper(this.loadedModel, this.activeModel.modelId);
+      }
+
+      // 2. Allocate an isolated sequence or context for this agent execution
       if (this.loadedContext && !this.loadedContext.disposed && (this.loadedContext as any).sequencesLeft > 0) {
         agentSequence = this.loadedContext.getSequence();
         agentSession = new LlamaChatSession({
           contextSequence: agentSequence,
+          chatWrapper: agentWrapper,
           systemPrompt: options.systemPrompt ?? 'You are Model Forge\'s Plan Agent, a project intelligence system running strictly locally on the user\'s workstation.',
           autoDisposeSequence: true,
         });
@@ -476,6 +528,7 @@ export class InferenceService {
         agentSequence = agentContext.getSequence();
         agentSession = new LlamaChatSession({
           contextSequence: agentSequence,
+          chatWrapper: agentWrapper,
           systemPrompt: options.systemPrompt ?? 'You are Model Forge\'s Plan Agent, a project intelligence system running strictly locally on the user\'s workstation.',
           autoDisposeSequence: true,
         });

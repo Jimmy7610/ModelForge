@@ -85,6 +85,18 @@ describe('PlanAgent (Read-Only Autonomous Project Intelligence)', () => {
     ).rejects.toThrow('No model loaded');
   });
 
+  it('rejects planning if active model is unsupported for tool calling', async () => {
+    vi.spyOn(inferenceService, 'getModelState').mockReturnValue('loaded');
+    vi.spyOn(inferenceService, 'getToolCapability').mockResolvedValue({
+      status: 'unsupported',
+      reason: 'Model did not trigger native function call handler',
+    });
+
+    await expect(
+      planAgent.startPlanning(project, 'Analyze this project')
+    ).rejects.toThrow('This model could not use Model Forge project tools reliably');
+  });
+
   it('autonomously executes model-driven tool calls, emits real activities, and streams plan', async () => {
     vi.spyOn(inferenceService, 'getModelState').mockReturnValue('loaded');
 
@@ -167,6 +179,58 @@ describe('PlanAgent (Read-Only Autonomous Project Intelligence)', () => {
     const state = planAgent.getState();
     expect(state.status).toBe('completed');
     expect(state.planContent).toBe(expectedPlanText);
+    expect(state.toolSummary).toBeDefined();
+    expect(state.toolSummary?.isFullyInspected).toBe(true);
+    expect(state.toolSummary?.successfulToolCalls).toBe(6);
+    expect(state.toolSummary?.distinctToolTypes).toBe(4);
+    expect(state.toolSummary?.distinctToolNames).toEqual(
+      expect.arrayContaining(['get_project_overview', 'list_directory', 'read_file', 'search_text'])
+    );
+    expect(state.toolSummary?.filesRead).toEqual(['package.json', 'src/App.tsx', 'src/game.ts']);
+    expect(state.toolSummary?.searchesPerformed).toEqual(['achievement']);
+  });
+
+  it('marks plan as incomplete if fewer than 3 tool calls are executed', async () => {
+    vi.spyOn(inferenceService, 'getModelState').mockReturnValue('loaded');
+
+    vi.spyOn(inferenceService, 'executeAgentPrompt').mockImplementation(async (options) => {
+      const funcs = options.functions as Record<string, any>;
+      // Only 2 tool calls executed
+      await funcs.get_project_overview.handler({});
+      await funcs.read_file.handler({ path: 'package.json' });
+      return '# Partial Plan';
+    });
+
+    const plan = await planAgent.startPlanning(project, 'Analyze this project');
+    const state = planAgent.getState();
+
+    expect(state.status).toBe('incomplete');
+    expect(plan).toContain('⚠️ Inspection incomplete: The model did not inspect enough project context');
+    expect(state.toolSummary?.isFullyInspected).toBe(false);
+    expect(state.toolSummary?.successfulToolCalls).toBe(2);
+    expect(state.toolSummary?.distinctToolTypes).toBe(2);
+  });
+
+  it('marks plan as incomplete if fewer than 2 distinct tool types are executed', async () => {
+    vi.spyOn(inferenceService, 'getModelState').mockReturnValue('loaded');
+
+    vi.spyOn(inferenceService, 'executeAgentPrompt').mockImplementation(async (options) => {
+      const funcs = options.functions as Record<string, any>;
+      // 3 tool calls, but all are list_directory (only 1 tool type)
+      await funcs.list_directory.handler({ path: '' });
+      await funcs.list_directory.handler({ path: 'src' });
+      await funcs.list_directory.handler({ path: 'src' });
+      return '# Plan with single tool type';
+    });
+
+    const plan = await planAgent.startPlanning(project, 'Analyze this project');
+    const state = planAgent.getState();
+
+    expect(state.status).toBe('incomplete');
+    expect(plan).toContain('⚠️ Inspection incomplete');
+    expect(state.toolSummary?.isFullyInspected).toBe(false);
+    expect(state.toolSummary?.successfulToolCalls).toBe(3);
+    expect(state.toolSummary?.distinctToolTypes).toBe(1);
   });
 
   it('appends warning if model generates a plan without calling any tools', async () => {

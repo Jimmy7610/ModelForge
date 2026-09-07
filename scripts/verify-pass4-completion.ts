@@ -55,8 +55,16 @@ async function main() {
     const startTime = Date.now();
     await inferenceService.loadModel(modelRecord.id, 2048);
     console.log(`Model loaded successfully in ${((Date.now() - startTime) / 1000).toFixed(2)}s`);
-    console.log(`Active Model: ${inferenceService.getActiveModel()?.displayName}`);
-    console.log(`Backend: ${inferenceService.getRuntimeInfo().backend}`);
+    console.log(`Active Model: ${inferenceService.getActiveModel()?.name}`);
+    const runtime = await inferenceService.getRuntimeInfo();
+    console.log(`Backend: ${runtime.backend}`);
+
+    // Check / probe tool capability
+    console.log('\n2b. Checking / probing tool capability on resident model...');
+    const cap = await inferenceService.getToolCapability();
+    console.log(`Tool Capability Status: ${cap.status}`);
+    console.log(`Wrapper Name: ${cap.wrapperName}`);
+    console.log(`Is Jinja: ${cap.isJinja}, usingNoJinjaFallback: ${cap.usingNoJinjaFallback}`);
 
     // B. Chat Turn 1 - Set secret code word ORANGECHAT
     console.log('\n3. Testing Chat Conversational Memory with secret code word: ORANGECHAT...');
@@ -113,6 +121,22 @@ async function main() {
     console.log(`Total activities recorded: ${activitiesRecorded.length}`);
     console.log(`Total text chunks streamed: ${streamedTokensCount}`);
     console.log(`Generated plan preview (first 250 chars):\n${generatedPlan.slice(0, 250)}...`);
+
+    const agentState = planAgent.getState();
+    console.log(`\nPlan Agent State:`);
+    console.log(`  Status: ${agentState.status}`);
+    console.log(`  Successful Tool Calls Count: ${agentState.successfulToolCallsCount}`);
+    console.log(`  Tool Summary:`, JSON.stringify(agentState.toolSummary, null, 2));
+
+    if ((agentState.toolSummary?.successfulToolCalls ?? 0) < 3) {
+      throw new Error(`QA FAIL: Expected >= 3 successful tool calls, got ${agentState.toolSummary?.successfulToolCalls}`);
+    }
+    if ((agentState.toolSummary?.distinctToolTypes ?? 0) < 2) {
+      throw new Error(`QA FAIL: Expected >= 2 distinct tool types, got ${agentState.toolSummary?.distinctToolTypes}`);
+    }
+    if (!agentState.toolSummary?.isFullyInspected) {
+      throw new Error(`QA FAIL: Expected isFullyInspected === true`);
+    }
 
     // E. Verify Chat Session Isolation (Code word recall & zero pollution)
     console.log('\n5. Verifying Chat Session Isolation after Plan Agent completion...');

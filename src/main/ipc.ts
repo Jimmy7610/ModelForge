@@ -414,6 +414,11 @@ export function registerIpcHandlers(
     return planAgent.getState();
   });
 
+  ipcMain.handle(IPC_CHANNELS.CHECK_TOOL_CAPABILITY, async (_event, modelId?: unknown) => {
+    const targetModelId = typeof modelId === 'string' ? modelId : undefined;
+    return inferenceService.getToolCapability(targetModelId);
+  });
+
   // Read-Only Workspace Inspection Tools
   const resolveProjectGuard = (projectId?: string): WorkspaceGuard => {
     const targetId = projectId || store.getActiveProjectId();

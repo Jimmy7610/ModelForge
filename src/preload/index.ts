@@ -12,6 +12,7 @@ import {
   AgentActivityItem,
   AgentPlanState,
   RunPlanPayload,
+  ToolCapabilityInfo,
 } from '../shared/types';
 import { APP_VERSION, IPC_CHANNELS } from '../shared/constants';
 
@@ -148,6 +149,10 @@ const api: ModelForgeAPI = {
 
   getAgentState: (): Promise<AgentPlanState> => {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_AGENT_STATE);
+  },
+
+  checkToolCapability: (modelId?: string): Promise<ToolCapabilityInfo> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.CHECK_TOOL_CAPABILITY, modelId);
   },
 
   onAgentActivity: (callback: (activity: AgentActivityItem) => void) => {

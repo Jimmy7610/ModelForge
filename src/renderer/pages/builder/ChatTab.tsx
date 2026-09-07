@@ -13,6 +13,8 @@ import {
   HardDrive,
 } from 'lucide-react';
 import { useAppStore } from '@/store/AppStoreContext';
+import { CopyButton } from '@/components/CopyButton';
+import { FormattedMessage } from '@/components/chat/FormattedMessage';
 import './ChatTab.css';
 
 const SUGGESTIONS = [
@@ -229,25 +231,45 @@ export const ChatTab: React.FC = () => {
 
                 <div className="chat-bubble-container">
                   <div className="chat-bubble-header">
-                    <span className="chat-bubble-author">
-                      {msg.role === 'user' ? 'You' : activeModel.name}
-                    </span>
-                    <span className="chat-bubble-time">
-                      {new Date(msg.timestamp).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                      })}
-                    </span>
+                    <div className="chat-bubble-header-left">
+                      <span className="chat-bubble-author">
+                        {msg.role === 'user' ? 'You' : activeModel.name}
+                      </span>
+                      <span className="chat-bubble-time">
+                        {new Date(msg.timestamp).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                        })}
+                      </span>
+                    </div>
+
+                    <div className="chat-bubble-header-actions">
+                      <CopyButton
+                        text={msg.content}
+                        label={msg.role === 'assistant' ? 'Copy' : undefined}
+                        compact
+                        tooltip={
+                          msg.role === 'assistant'
+                            ? 'Copy response (source markdown)'
+                            : 'Copy prompt'
+                        }
+                        ariaLabel={
+                          msg.role === 'assistant'
+                            ? 'Copy assistant response'
+                            : 'Copy prompt'
+                        }
+                        disabled={msg.isStreaming && !msg.content}
+                      />
+                    </div>
                   </div>
 
                   <div className="chat-bubble-content">
-                    {msg.content}
-                    {msg.isStreaming && (
-                      <span className="chat-stream-caret" aria-hidden="true">
-                        ▋
-                      </span>
-                    )}
+                    <FormattedMessage
+                      content={msg.content}
+                      isStreaming={msg.isStreaming}
+                      isUser={msg.role === 'user'}
+                    />
                   </div>
 
                   {msg.metrics && !msg.isStreaming && (
@@ -299,6 +321,15 @@ export const ChatTab: React.FC = () => {
             </div>
 
             <div className="chat-buttons-row">
+              {inputPrompt.trim().length > 0 && !isGenerating && (
+                <CopyButton
+                  text={inputPrompt}
+                  label="Copy Prompt"
+                  compact
+                  tooltip="Copy current prompt to clipboard"
+                  ariaLabel="Copy current prompt"
+                />
+              )}
               {isGenerating ? (
                 <button
                   className="btn-stop-generation"

@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron';
+import { BrowserWindow, clipboard, dialog, ipcMain } from 'electron';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -473,6 +473,19 @@ export function registerIpcHandlers(
     const guard = resolveProjectGuard(opts.projectId);
     const tools = new WorkspaceTools(guard);
     return tools.searchText(opts);
+  });
+
+  // System & Clipboard (Pass 4.1)
+  ipcMain.handle(IPC_CHANNELS.COPY_TEXT, (_event, text: unknown) => {
+    if (typeof text !== 'string') {
+      return false;
+    }
+    // Sane limit: 5MB maximum
+    if (text.length > 5 * 1024 * 1024) {
+      return false;
+    }
+    clipboard.writeText(text);
+    return true;
   });
 
   // Window Controls

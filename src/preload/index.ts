@@ -202,6 +202,11 @@ const api: ModelForgeAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.SEARCH_TEXT, options);
   },
 
+  // System & Clipboard (Pass 4.1)
+  copyText: (text: string): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.COPY_TEXT, text);
+  },
+
   // Window Controls
   windowControl: (action: 'minimize' | 'maximize' | 'close'): Promise<void> => {
     return ipcRenderer.invoke(IPC_CHANNELS.WINDOW_CONTROL, action);

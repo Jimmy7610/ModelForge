@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, ShieldAlert, FileText, AlertTriangle, RefreshCw, Copy, Check } from 'lucide-react';
+import { Lock, ShieldAlert, FileText, AlertTriangle, RefreshCw } from 'lucide-react';
 import { FileReadResult } from '../../../../main/workspace/types';
+import { CopyButton } from '@/components/CopyButton';
 
 interface FilePreviewProps {
   projectId: string;
@@ -19,7 +20,6 @@ export const FilePreview: React.FC<FilePreviewProps> = ({ projectId, relativePat
   const [fileData, setFileData] = useState<FileReadResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!projectId || !relativePath) {
@@ -58,11 +58,15 @@ export const FilePreview: React.FC<FilePreviewProps> = ({ projectId, relativePat
     };
   }, [projectId, relativePath]);
 
-  const handleCopy = () => {
-    if (!fileData?.content) return;
-    navigator.clipboard.writeText(fileData.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const getCleanCode = (): string => {
+    if (!fileData?.content) return '';
+    const rawLines = fileData.content.split(/\r?\n/);
+    const cleaned: string[] = [];
+    for (const l of rawLines) {
+      if (l.startsWith('[Truncated:')) continue;
+      cleaned.push(l.replace(/^\d+:\s?/, ''));
+    }
+    return cleaned.join('\n');
   };
 
   if (!relativePath) {
@@ -92,6 +96,15 @@ export const FilePreview: React.FC<FilePreviewProps> = ({ projectId, relativePat
         <ShieldAlert size={24} className="text-danger" />
         <div className="file-preview-error-title">Access Blocked</div>
         <div className="file-preview-error-sub">{error}</div>
+        <div className="mt-3">
+          <CopyButton
+            text={error}
+            label="Copy Error"
+            compact
+            tooltip="Copy error details"
+            ariaLabel="Copy error details"
+          />
+        </div>
       </div>
     );
   }
@@ -122,14 +135,14 @@ export const FilePreview: React.FC<FilePreviewProps> = ({ projectId, relativePat
           <span>{formatSize(fileData.sizeBytes)}</span>
           <span className="meta-sep">•</span>
           <span>{fileData.totalLines} lines</span>
-          <button
-            className="icon-btn-ghost btn-copy"
-            onClick={handleCopy}
-            title="Copy file content"
+          <CopyButton
+            text={getCleanCode}
+            label="Copy File"
+            compact
+            tooltip="Copy clean file contents (line numbers stripped)"
+            ariaLabel="Copy file contents"
             disabled={fileData.isBinary}
-          >
-            {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
-          </button>
+          />
         </div>
       </div>
 

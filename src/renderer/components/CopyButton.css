@@ -1,0 +1,66 @@
+.mf-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary, #94a3b8);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.mf-copy-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text-primary, #f1f5f9);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.mf-copy-btn:focus-visible {
+  outline: 2px solid var(--accent-color, #38bdf8);
+  outline-offset: 1px;
+}
+
+.mf-copy-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Compact mode (for icon-only or inline controls) */
+.mf-copy-btn.compact {
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+.mf-copy-btn.icon-only {
+  padding: 4px;
+  width: 24px;
+  height: 24px;
+}
+
+/* Copied state */
+.mf-copy-btn.copied {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.mf-copy-icon {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.mf-copy-btn.copied .mf-copy-icon {
+  transform: scale(1.08);
+}
+
+.mf-copy-label {
+  display: inline-block;
+}

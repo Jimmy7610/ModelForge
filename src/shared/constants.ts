@@ -1,6 +1,6 @@
 import { AppSettings } from './types';
 
-export const APP_VERSION = '0.4.0';
+export const APP_VERSION = '0.4.1';
 export const SCHEMA_VERSION = 2;
 
 export const MAX_PROMPT_CHARS = 16000;
@@ -59,6 +59,9 @@ export const IPC_CHANNELS = {
   LIST_DIRECTORY: 'modelforge:list-directory',
   READ_FILE: 'modelforge:read-file',
   SEARCH_TEXT: 'modelforge:search-text',
+
+  // System & Clipboard (Pass 4.1)
+  COPY_TEXT: 'modelforge:copy-text',
 
   // Window Controls
   WINDOW_CONTROL: 'modelforge:window-control',

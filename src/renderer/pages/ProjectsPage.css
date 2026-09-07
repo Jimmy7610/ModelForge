@@ -127,6 +127,21 @@
   text-overflow: ellipsis;
 }
 
+.project-path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-copy-btn {
+  opacity: 0.6;
+}
+
+.project-item-card:hover .project-copy-btn {
+  opacity: 1;
+}
+
 .project-delete-btn {
   display: flex;
   align-items: center;

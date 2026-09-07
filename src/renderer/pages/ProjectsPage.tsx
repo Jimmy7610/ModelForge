@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Folder, FolderPlus, Trash2, Calendar, GitBranch, ShieldAlert } from 'lucide-react';
 import { useAppStore } from '@/store/AppStoreContext';
 import { Project } from '@shared/types';
+import { CopyButton } from '@/components/CopyButton';
 import './ProjectsPage.css';
 
 export const ProjectsPage: React.FC = () => {
@@ -66,9 +67,18 @@ export const ProjectsPage: React.FC = () => {
                         <span className="project-name">{proj.name}</span>
                         {isActive && <span className="badge badge-local">Active</span>}
                       </div>
-                      <span className="project-path font-mono" title={displayPath}>
-                        {displayPath}
-                      </span>
+                      <div className="project-path-row">
+                        <span className="project-path font-mono" title={displayPath}>
+                          {displayPath}
+                        </span>
+                        <CopyButton
+                          text={displayPath}
+                          compact
+                          tooltip="Copy project directory path"
+                          ariaLabel={`Copy path for project ${proj.name}`}
+                          className="project-copy-btn"
+                        />
+                      </div>
                     </div>
                   </div>
 

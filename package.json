@@ -1,6 +1,6 @@
 {
   "name": "model-forge",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "A completely local AI development workstation.",
   "main": "dist-electron/main/index.js",

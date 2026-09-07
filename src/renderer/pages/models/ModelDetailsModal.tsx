@@ -19,6 +19,7 @@ import {
 import { ModelRecord } from '@shared/types';
 import { formatFileSize, formatContextLength } from './ModelCard';
 import { useAppStore } from '@/store/AppStoreContext';
+import { CopyButton } from '@/components/CopyButton';
 import './ModelDetailsModal.css';
 
 interface ModelDetailsModalProps {
@@ -113,10 +114,16 @@ export const ModelDetailsModal: React.FC<ModelDetailsModalProps> = ({ model, onC
           {model.metadataError && (
             <div className="details-error-banner">
               <AlertCircle size={16} className="text-warning" />
-              <div>
+              <div style={{ flex: 1 }}>
                 <div className="font-semibold">Metadata Inspection Warning</div>
                 <div className="text-xs">{model.metadataError}</div>
               </div>
+              <CopyButton
+                text={model.metadataError}
+                compact
+                tooltip="Copy warning details"
+                ariaLabel="Copy metadata warning"
+              />
             </div>
           )}
 
@@ -203,9 +210,18 @@ export const ModelDetailsModal: React.FC<ModelDetailsModalProps> = ({ model, onC
 
               <div className="details-row">
                 <span className="details-label">Full File Path</span>
-                <span className="details-val font-mono text-secondary path-wrap" title={model.path}>
-                  {model.path}
-                </span>
+                <div className="details-val-with-copy">
+                  <span className="details-val font-mono text-secondary path-wrap" title={model.path}>
+                    {model.path}
+                  </span>
+                  <CopyButton
+                    text={model.path}
+                    label="Copy Path"
+                    compact
+                    tooltip="Copy full model file path to clipboard"
+                    ariaLabel="Copy full model path"
+                  />
+                </div>
               </div>
             </div>
           </div>

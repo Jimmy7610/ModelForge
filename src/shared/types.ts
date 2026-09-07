@@ -294,6 +294,9 @@ export interface ModelForgeAPI {
   readFile: (options: { projectId?: string; path: string; startLine?: number; endLine?: number }) => Promise<any>;
   searchText: (options: { projectId?: string; query: string; path?: string; caseSensitive?: boolean; maxMatches?: number }) => Promise<any>;
 
+  // System & Clipboard (Pass 4.1)
+  copyText: (text: string) => Promise<boolean>;
+
   // Window Controls
   windowControl: (action: 'minimize' | 'maximize' | 'close') => Promise<void>;
   isMaximized: () => Promise<boolean>;

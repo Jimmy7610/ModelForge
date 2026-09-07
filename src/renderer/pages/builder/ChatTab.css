@@ -280,13 +280,35 @@
 .chat-bubble-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 5px;
   font-size: 11px;
 }
 
+.chat-bubble-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .chat-message-row.user-row .chat-bubble-header {
-  justify-content: flex-end;
+  flex-direction: row-reverse;
+}
+
+.chat-message-row.user-row .chat-bubble-header-left {
+  flex-direction: row-reverse;
+}
+
+.chat-bubble-header-actions {
+  display: flex;
+  align-items: center;
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+.chat-message-row:hover .chat-bubble-header-actions {
+  opacity: 1;
 }
 
 .chat-bubble-author {

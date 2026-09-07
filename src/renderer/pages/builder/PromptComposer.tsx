@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Edit3, Play, ListOrdered, Bookmark, ChevronDown, AlertCircle } from 'lucide-react';
 import { useAppStore } from '@/store/AppStoreContext';
+import { CopyButton } from '@/components/CopyButton';
 import './PromptComposer.css';
 
 export const PromptComposer: React.FC = () => {
@@ -84,6 +85,15 @@ export const PromptComposer: React.FC = () => {
           <Edit3 size={14} className="text-secondary" />
           <span>Prompt / Composer</span>
         </div>
+        {prompt.trim().length > 0 && (
+          <CopyButton
+            text={prompt}
+            label="Copy Prompt"
+            compact
+            tooltip="Copy prompt text to clipboard"
+            ariaLabel="Copy prompt text"
+          />
+        )}
       </div>
 
       {/* Contextual Feedback Banner if triggered */}
@@ -91,6 +101,12 @@ export const PromptComposer: React.FC = () => {
         <div className="composer-feedback-banner">
           <AlertCircle size={14} className="feedback-icon" />
           <span className="feedback-text">{activeMessage}</span>
+          <CopyButton
+            text={activeMessage}
+            compact
+            tooltip="Copy notice"
+            ariaLabel="Copy notice details"
+          />
           <button
             className="feedback-dismiss"
             onClick={() => setActiveMessage(null)}

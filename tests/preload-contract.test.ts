@@ -37,11 +37,11 @@ describe('Preload & Bridge Architecture Contract', () => {
     };
 
     expect(bridgeInfo.available).toBe(true);
-    expect(bridgeInfo.version).toBe('0.4.0');
+    expect(bridgeInfo.version).toBe('0.4.1');
     expect(bridgeInfo.preloadFormat).toBe('cjs');
   });
 
-  it('verifies ModelForgeAPI includes getBridgeInfo health check', () => {
+  it('verifies ModelForgeAPI includes getBridgeInfo and copyText contracts', () => {
     const dummyApi: Partial<ModelForgeAPI> = {
       getBridgeInfo: () => ({
         available: true,
@@ -49,11 +49,14 @@ describe('Preload & Bridge Architecture Contract', () => {
         preloadFormat: 'cjs',
         platform: process.platform,
       }),
+      copyText: async (text: string) => typeof text === 'string',
     };
 
     expect(dummyApi.getBridgeInfo).toBeDefined();
     const result = dummyApi.getBridgeInfo!();
     expect(result.available).toBe(true);
+    expect(result.version).toBe('0.4.1');
     expect(result.preloadFormat).toBe('cjs');
+    expect(dummyApi.copyText).toBeDefined();
   });
 });

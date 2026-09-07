@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Activity, Trash2, CheckCircle2, Eye, ShieldCheck, AlertCircle, Loader2, ShieldAlert } from 'lucide-react';
 
 import { useAppStore } from '@/store/AppStoreContext';
+import { CopyButton } from '@/components/CopyButton';
 import './AgentActivity.css';
 
 interface ActivityStep {
@@ -36,6 +37,13 @@ export const AgentActivity: React.FC = () => {
         detail: a.detail,
       }));
 
+  const getActivityLogSummary = (): string => {
+    if (displaySteps.length === 0) return '';
+    return displaySteps
+      .map((s) => `[${s.time}] [${s.status.toUpperCase()}] ${s.label}${s.detail ? ` (${s.detail})` : ''}`)
+      .join('\n');
+  };
+
   const handleClear = () => {
     if (showPreview) {
       setShowPreview(false);
@@ -64,6 +72,14 @@ export const AgentActivity: React.FC = () => {
           {showPreview && <span className="badge badge-local">Preview</span>}
         </div>
         <div className="activity-header-actions">
+          <CopyButton
+            text={getActivityLogSummary}
+            label="Copy Log"
+            compact
+            disabled={!hasContent}
+            tooltip="Copy activity log to clipboard"
+            ariaLabel="Copy activity log"
+          />
           <button
             className="btn-ghost-sm"
             onClick={() => setShowPreview((p) => !p)}
@@ -124,7 +140,16 @@ export const AgentActivity: React.FC = () => {
                       <span className="timeline-time font-mono">{step.time}</span>
                     </div>
                     {step.detail && (
-                      <span className="timeline-detail text-muted font-mono">{step.detail}</span>
+                      <div className="timeline-detail-row">
+                        <span className="timeline-detail text-muted font-mono">{step.detail}</span>
+                        <CopyButton
+                          text={step.detail}
+                          compact
+                          tooltip="Copy step detail"
+                          ariaLabel={`Copy detail for ${step.label}`}
+                          className="timeline-copy-btn"
+                        />
+                      </div>
                     )}
                   </div>
                 </div>

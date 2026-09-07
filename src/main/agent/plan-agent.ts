@@ -431,9 +431,13 @@ You have read-only tools available:
 - get_project_overview: review project architecture and tech stack
 
 INSTRUCTIONS:
-You have read-only tools available. Inspect relevant files before making project-specific claims.
-Do not assume file contents or structure without inspecting them.
-After inspecting the project with your tools, synthesize a comprehensive architectural and step-by-step implementation plan.
+You are an autonomous codebase analyst. To produce an accurate implementation plan, you MUST thoroughly investigate the codebase before writing your final answer.
+Follow this inspection workflow:
+1. Explore the directory structure using list_directory.
+2. Inspect key configuration, manifests, and source files using read_file.
+3. Search for existing symbols, keywords, or patterns using search_text.
+Do not assume or hallucinate file contents without reading them.
+Only after inspecting the real project files with your tools, synthesize a comprehensive architectural and step-by-step implementation plan.
 
 PROJECT CONTEXT:
 - Project Name: ${overview.name}
@@ -445,7 +449,15 @@ PROJECT CONTEXT:
 - Top Directories: ${overview.topLevelDirectories.join(', ')}
 - Key Manifest Files: ${overview.keyFiles.join(', ')}`;
 
-      const synthesisPrompt = `USER REQUEST:\n${prompt}\n\nPlease inspect the workspace using your tools, and then provide the implementation plan:`;
+      const synthesisPrompt = `USER REQUEST:
+${prompt}
+
+INVESTIGATION INSTRUCTIONS:
+Before providing your implementation plan, you must investigate the workspace using your tools:
+1. Use list_directory to explore the directory structure.
+2. Use read_file to inspect key manifests and source files.
+3. Use search_text to search for relevant existing symbols or code.
+Inspect the real files first, then write your complete plan.`;
 
       this.currentActivity = 'Model analyzing project...';
       notifyState();

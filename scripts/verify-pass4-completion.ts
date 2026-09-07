@@ -53,7 +53,7 @@ async function main() {
     // A. Load Real GGUF Model
     console.log('\n2. Loading real GGUF model into single VRAM residency with dual sequences...');
     const startTime = Date.now();
-    await inferenceService.loadModel(modelRecord.id, 2048);
+    await inferenceService.loadModel(modelRecord.id, 4096);
     console.log(`Model loaded successfully in ${((Date.now() - startTime) / 1000).toFixed(2)}s`);
     console.log(`Active Model: ${inferenceService.getActiveModel()?.name}`);
     const runtime = await inferenceService.getRuntimeInfo();

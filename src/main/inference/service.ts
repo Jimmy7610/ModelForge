@@ -171,7 +171,7 @@ export class InferenceService {
       let context: LlamaContext;
       try {
         context = await model.createContext({
-          contextSize,
+          contextSize: Math.max(contextSize * 2, 4096),
           sequences: 2,
         });
       } catch {

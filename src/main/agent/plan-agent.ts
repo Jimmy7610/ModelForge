@@ -445,7 +445,7 @@ PROJECT CONTEXT:
 - Top Directories: ${overview.topLevelDirectories.join(', ')}
 - Key Manifest Files: ${overview.keyFiles.join(', ')}`;
 
-      const synthesisPrompt = `${systemInstruction}\n\nUSER REQUEST:\n${prompt}\n\nPlease inspect the workspace using your tools, and then provide the implementation plan:`;
+      const synthesisPrompt = `USER REQUEST:\n${prompt}\n\nPlease inspect the workspace using your tools, and then provide the implementation plan:`;
 
       this.currentActivity = 'Model analyzing project...';
       notifyState();

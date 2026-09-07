@@ -263,13 +263,12 @@ export class PlanAgent {
                   maxDepth: 2,
                 });
                 const summary = `${res.entries.length} items`;
-                const bounded = budget.boundToolOutput(JSON.stringify(res.entries.map(e => ({
+                const compact = JSON.stringify(res.entries.filter(e => !e.isIgnored).map(e => ({
                   name: e.name,
                   path: e.relativePath,
                   type: e.type === 'directory' ? 'dir' : 'file',
-                  size: e.sizeBytes,
-                  ignored: e.isIgnored,
-                })), null, 2));
+                })));
+                const bounded = budget.boundToolOutput(compact);
                 budget.recordToolCall(bounded.content.length);
                 successfulToolCalls++;
                 this.successfulToolCallsCount = successfulToolCalls;
@@ -386,10 +385,15 @@ export class PlanAgent {
                   path: args?.path,
                   maxMatches: budget.limits.maxSearchResultsPerCall,
                 });
-                const bounded = budget.boundToolOutput(JSON.stringify({
+                const compact = JSON.stringify({
                   totalMatches: res.totalMatches,
-                  matches: res.matches,
-                }, null, 2));
+                  matches: res.matches.slice(0, 15).map(m => ({
+                    file: m.file,
+                    line: m.line,
+                    content: (m.content || '').trim(),
+                  })),
+                });
+                const bounded = budget.boundToolOutput(compact);
                 budget.recordToolCall(bounded.content.length);
                 successfulToolCalls++;
                 this.successfulToolCallsCount = successfulToolCalls;
@@ -421,7 +425,7 @@ export class PlanAgent {
       }
 
       // 4. Honest Model Prompting (Explicitly instructing tool usage before claims)
-      const systemInstruction = `You are Model Forge's Plan Agent, a project intelligence system running strictly locally on the user's workstation.
+      const systemInstruction = `You are Model Forge's Plan Agent, an autonomous project intelligence system running strictly locally on the user's workstation.
 You are operating in Safe Read-Only Mode.
 
 You have read-only tools available:
@@ -453,20 +457,30 @@ PROJECT CONTEXT:
 ${prompt}
 
 INVESTIGATION INSTRUCTIONS:
-Before providing your implementation plan, you must investigate the workspace using your tools:
-1. Use list_directory to explore the directory structure.
-2. Use read_file to inspect key manifests and source files.
-3. Use search_text to search for relevant existing symbols or code.
-Inspect the real files first, then write your complete plan.`;
+Step 1: Inspect the workspace directory structure using list_directory, and read key configuration files (such as package.json) using read_file.`;
 
       this.currentActivity = 'Model analyzing project...';
       notifyState();
+
+      let synthesisDone = false;
+      const followUpPrompt = async (): Promise<string | null> => {
+        if (this.abortController?.signal.aborted) return null;
+        if (successfulToolCalls < 3 || distinctToolNames.size < 2) {
+          return 'Now continue inspecting the codebase: inspect the source directory with list_directory or read key source files with read_file, or search for key symbols with search_text.';
+        }
+        if (!synthesisDone) {
+          synthesisDone = true;
+          return 'Now synthesize and write the complete, detailed architecture analysis and step-by-step implementation plan based on all the real files and findings you inspected.';
+        }
+        return null;
+      };
 
       const generatedPlan = await this.inferenceService.executeAgentPrompt({
         prompt: synthesisPrompt,
         systemPrompt: systemInstruction,
         functions: dynamicFunctions,
         signal: this.abortController.signal,
+        followUpPrompt,
         onChunk: (chunkText) => {
           if (this.activeRunId === currentRunId) {
             this.planContent += chunkText;

@@ -476,6 +476,7 @@ export class InferenceService {
     maxTokens?: number;
     signal?: AbortSignal;
     onChunk?: (text: string) => void;
+    followUpPrompt?: () => Promise<string | null> | string | null;
   }): Promise<string> {
     if (this.modelState !== 'loaded' || (!this.loadedModel && !this.chatSession)) {
       throw new Error('No model loaded. Please load a local GGUF model first.');
@@ -520,7 +521,7 @@ export class InferenceService {
       } else if (this.loadedModel && !this.loadedModel.disposed) {
         // Fallback: allocate a conservative isolated context on the existing loaded LlamaModel
         // (Shares single resident model weights in memory/VRAM)
-        const targetContextSize = Math.min(this.activeModel?.contextLength || DEFAULT_CONTEXT_TOKENS, 2048);
+        const targetContextSize = Math.max(this.activeModel?.contextLength || DEFAULT_CONTEXT_TOKENS, 4096);
         agentContext = await this.loadedModel.createContext({
           contextSize: targetContextSize,
           sequences: 1,
@@ -543,16 +544,8 @@ export class InferenceService {
         stopOnAbortSignal: true,
         temperature: options.temperature ?? 0.3,
         maxTokens: options.maxTokens ?? 2048,
-        onResponseChunk: (chunk: { text?: string }) => {
-          if (chunk.text) {
-            fullResponse += chunk.text;
-            if (options.onChunk) {
-              options.onChunk(chunk.text);
-            }
-          }
-        },
         onTextChunk: (chunkText: string) => {
-          if (chunkText && !fullResponse.endsWith(chunkText)) {
+          if (chunkText) {
             fullResponse += chunkText;
             if (options.onChunk) {
               options.onChunk(chunkText);
@@ -567,6 +560,15 @@ export class InferenceService {
 
       // Execute on isolated agent session
       await agentSession.prompt(options.prompt, promptOptions);
+
+      // Execute any follow-up investigation or synthesis turns
+      if (options.followUpPrompt && !options.signal?.aborted) {
+        let nextPrompt = await options.followUpPrompt();
+        while (nextPrompt && !options.signal?.aborted) {
+          await agentSession.prompt(nextPrompt, promptOptions);
+          nextPrompt = await options.followUpPrompt();
+        }
+      }
 
       return fullResponse;
     } finally {

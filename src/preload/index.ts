@@ -223,6 +223,18 @@ const api: ModelForgeAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.CREATE_MANUAL_CHECKPOINT, { projectId, description });
   },
 
+  enableEditForProject: (projectId: string): Promise<{ authorized: boolean; authorizedProjectId: string | null }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.ENABLE_EDIT_FOR_PROJECT, projectId);
+  },
+
+  disableEdit: (): Promise<void> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.DISABLE_EDIT);
+  },
+
+  getEditAuthorizationState: (): Promise<{ authorized: boolean; authorizedProjectId: string | null }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_EDIT_AUTHORIZATION_STATE);
+  },
+
   onEditAgentActivity: (callback: (activity: AgentActivityItem) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, activity: AgentActivityItem) => {
       callback(activity);

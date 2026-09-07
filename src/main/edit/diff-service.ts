@@ -7,6 +7,8 @@ import {
   FileDiffItem,
 } from './types';
 
+import { WorkspaceGuard } from '../workspace/guard';
+
 export interface DiffHunk {
   oldStart: number;
   oldLines: number;
@@ -23,15 +25,43 @@ export class DiffService {
   public static computeCheckpointDiff(
     manifest: CheckpointManifest,
     checkpointDir: string,
-    projectRoot: string
+    projectRoot: string,
+    guard?: WorkspaceGuard
   ): CheckpointDiffResult {
+    const canonicalTarget = path.resolve(projectRoot);
+    const canonicalManifestRoot = path.resolve(manifest.projectRoot);
+    if (canonicalTarget !== canonicalManifestRoot) {
+      throw new Error('Checkpoint workspace location no longer matches the registered project.');
+    }
+
+    const activeGuard = guard || new WorkspaceGuard(canonicalTarget);
     const fileItems: FileDiffItem[] = [];
     let totalInsertions = 0;
     let totalDeletions = 0;
     let hasOverallConflict = false;
+    const filesDir = path.join(checkpointDir, 'files');
 
     for (const [relPath, entry] of Object.entries(manifest.files)) {
-      const currentDiskPath = path.join(projectRoot, relPath);
+      if (
+        !relPath ||
+        typeof relPath !== 'string' ||
+        path.isAbsolute(relPath) ||
+        relPath.includes('..') ||
+        relPath.includes('\0') ||
+        relPath.includes(':')
+      ) {
+        continue;
+      }
+
+      let currentDiskPath: string;
+      try {
+        const readCheck = activeGuard.resolveReadPath(relPath);
+        if (!readCheck.allowed) continue;
+        currentDiskPath = readCheck.canonicalPath;
+      } catch {
+        continue;
+      }
+
       const currentExists = fs.existsSync(currentDiskPath);
 
       // Check external conflict if lastAgentSha256 was recorded
@@ -90,9 +120,14 @@ export class DiffService {
         totalInsertions += insertions;
       } else {
         // Existed before scenario
-        const backupPath = entry.backupFileName
-          ? path.join(checkpointDir, 'files', entry.backupFileName)
-          : null;
+        let backupPath: string | null = null;
+        if (entry.backupFileName && /^[a-f0-9]{64}\.bak$/.test(entry.backupFileName)) {
+          const resolved = path.resolve(filesDir, entry.backupFileName);
+          const rel = path.relative(filesDir, resolved);
+          if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+            backupPath = resolved;
+          }
+        }
 
         let originalContent = '';
         if (backupPath && fs.existsSync(backupPath)) {

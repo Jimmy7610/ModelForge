@@ -12,16 +12,27 @@ import { WorkspaceGuard } from '../src/main/workspace/guard';
 import { Project, ModelRecord } from '../src/shared/types';
 
 async function main() {
-  const modelPath = 'S:\\AI\\Models\\GGUF\\qwen2.5-coder-7b-instruct-q4_k_m.gguf';
+  const modelPath = process.env.MODEL_FORGE_TEST_GGUF;
 
   console.log('====================================================');
-  console.log('MODEL FORGE v0.5.0 — REAL HARDWARE QA EXECUTION');
+  console.log('MODEL FORGE v0.5.1 — REAL HARDWARE QA EXECUTION');
   console.log('====================================================');
   console.log(`Timestamp: ${new Date().toISOString()}`);
+
+  if (!modelPath) {
+    console.log('[INFO] MODEL_FORGE_TEST_GGUF environment variable is not set.');
+    console.log('To run hardware QA against a real local GGUF model:');
+    console.log('  PowerShell:');
+    console.log('    $env:MODEL_FORGE_TEST_GGUF="path\\to\\model.gguf"; npx tsx scripts/run-hardware-qa.ts');
+    console.log('Exiting cleanly (0).');
+    process.exit(0);
+  }
+
   console.log(`Target Model: ${modelPath}`);
 
   if (!fs.existsSync(modelPath)) {
-    throw new Error(`Model file not found at: ${modelPath}`);
+    console.error(`[ERROR] Model file not found at: ${modelPath}`);
+    process.exit(1);
   }
 
   // Define isolated throwaway project in OS Temp
@@ -103,20 +114,17 @@ async function main() {
   const editAgent = new EditAgent(inferenceService, checkpointService);
 
   // ----------------------------------------------------
-  // QA Scenario 1: Model Modifies math.ts + Rollback Verification
+  // QA Scenario 1: Model File Modification + File Creation + Rollback
   // ----------------------------------------------------
   console.log('\n====================================================');
-  console.log('QA SCENARIO 1: Model File Modification + Rollback');
+  console.log('QA SCENARIO 1: Model File Modification + File Creation + Rollback');
   console.log('====================================================');
 
-  const s1Prompt = `Inspect src/math.ts using read_file. Then use replace_in_file to add a multiply function:
-export function multiply(a: number, b: number): number {
-  return a * b;
-}`;
+  const s1Prompt = `Inspect src/math.ts. Keep the existing add function. Add a subtract function to src/math.ts. Also CREATE a new file: src/version.ts containing exactly: export const MODEL_FORGE_EDIT_QA = true; Do not run tests.`;
 
   console.log(`[S1] Prompting Edit Agent: "${s1Prompt.slice(0, 70)}..."`);
   const s1Start = Date.now();
-  const s1Result = await editAgent.startEditing(qaProject, s1Prompt, {
+  await editAgent.startEditing(qaProject, s1Prompt, {
     onActivity: (act) => {
       console.log(`  [Agent Activity] [${act.status.toUpperCase()}] ${act.toolName ? `${act.toolName}: ` : ''}${act.label}`);
     },
@@ -136,14 +144,35 @@ export function multiply(a: number, b: number): number {
   if (!s1CheckpointId) throw new Error('Scenario 1 failed: No checkpointId generated!');
   console.log(`[S1] Checkpoint ID: ${s1CheckpointId}`);
 
-  // Verify file was modified on disk
-  const s1DiskContent = fs.readFileSync(path.join(qaDir, 'src', 'math.ts'), 'utf8');
-  console.log('[S1] Current Disk Content:\n' + s1DiskContent);
-  if (!s1DiskContent.includes('multiply')) {
-    throw new Error('Scenario 1 failed: math.ts does not contain multiply function!');
+  // Verify create_file tool call was requested by the model
+  const toolNames = s1State.summary?.distinctToolNames || [];
+  const createdFiles = s1State.summary?.filesCreated || [];
+  if (!toolNames.includes('create_file') && createdFiles.length === 0) {
+    throw new Error('Scenario 1 failed: Model did not execute create_file!');
   }
 
-  // Verify Checkpoint Diff
+  // Verify file modification on disk
+  const s1MathContent = fs.readFileSync(path.join(qaDir, 'src', 'math.ts'), 'utf8');
+  console.log('[S1] Current Disk Content (math.ts):\n' + s1MathContent);
+  if (!s1MathContent.includes('subtract')) {
+    throw new Error('Scenario 1 failed: math.ts does not contain subtract function!');
+  }
+  if (!s1MathContent.includes('add')) {
+    throw new Error('Scenario 1 failed: math.ts lost original add function!');
+  }
+
+  // Verify file creation on disk
+  const versionFilePath = path.join(qaDir, 'src', 'version.ts');
+  if (!fs.existsSync(versionFilePath)) {
+    throw new Error('Scenario 1 failed: src/version.ts does not exist on disk!');
+  }
+  const s1VersionContent = fs.readFileSync(versionFilePath, 'utf8');
+  console.log('[S1] Current Disk Content (version.ts):\n' + s1VersionContent);
+  if (!s1VersionContent.includes('export const MODEL_FORGE_EDIT_QA = true;')) {
+    throw new Error(`Scenario 1 failed: src/version.ts content mismatch!\nExpected: export const MODEL_FORGE_EDIT_QA = true;\nActual: ${s1VersionContent}`);
+  }
+
+  // Verify Checkpoint Diff reports both files
   const s1Manifest = await checkpointService.getManifest(s1CheckpointId, qaProject.id);
   if (!s1Manifest) throw new Error('Scenario 1 failed: Manifest not found!');
   const s1Diff = DiffService.computeCheckpointDiff(
@@ -152,33 +181,54 @@ export function multiply(a: number, b: number): number {
     qaDir
   );
   console.log(`[S1] Checkpoint Diff: ${s1Diff.totalFilesChanged} file(s) changed, +${s1Diff.totalInsertions}/-${s1Diff.totalDeletions}`);
-  console.log('[S1] Unified Patch:\n' + s1Diff.files[0]?.unifiedDiff);
+  for (const fileDiff of s1Diff.files) {
+    console.log(`  File: ${fileDiff.relativePath} (${fileDiff.status}) +${fileDiff.insertions}/-${fileDiff.deletions}`);
+    console.log(fileDiff.unifiedDiff);
+  }
+
+  if (s1Diff.totalFilesChanged < 2) {
+    throw new Error(`Scenario 1 failed: Expected at least 2 changed files in diff, got ${s1Diff.totalFilesChanged}`);
+  }
+  const diffVersion = s1Diff.files.find((f) => f.relativePath === 'src/version.ts');
+  if (!diffVersion || diffVersion.status !== 'created') {
+    throw new Error('Scenario 1 failed: src/version.ts not found in diff or status is not "created"!');
+  }
+  const diffMath = s1Diff.files.find((f) => f.relativePath === 'src/math.ts');
+  if (!diffMath || diffMath.status !== 'modified') {
+    throw new Error('Scenario 1 failed: src/math.ts not found in diff or status is not "modified"!');
+  }
 
   // Execute Rollback
   console.log('[S1] Executing Rollback...');
   const s1Rollback = await checkpointService.rollbackCheckpoint(s1CheckpointId, qaProject.id, new WorkspaceGuard(qaDir));
-  console.log(`[S1] Rollback result: success=${s1Rollback.success}, restored=${s1Rollback.restoredFiles.join(', ')}`);
+  console.log(`[S1] Rollback result: success=${s1Rollback.success}, restored=${s1Rollback.restoredFiles.join(', ')}, deletedCreated=${s1Rollback.deletedCreatedFiles?.join(', ')}`);
   if (!s1Rollback.success) throw new Error('Scenario 1 failed: Rollback returned false!');
 
-  // Verify bit-for-bit restoration
-  const s1RestoredContent = fs.readFileSync(path.join(qaDir, 'src', 'math.ts'), 'utf8');
-  if (s1RestoredContent !== initialMathContent) {
-    throw new Error(`Scenario 1 failed: math.ts content mismatch after rollback!\nExpected:\n${initialMathContent}\nActual:\n${s1RestoredContent}`);
+  // Verify bit-for-bit restoration of math.ts
+  const s1RestoredMathContent = fs.readFileSync(path.join(qaDir, 'src', 'math.ts'), 'utf8');
+  if (s1RestoredMathContent !== initialMathContent) {
+    throw new Error(`Scenario 1 failed: math.ts content mismatch after rollback!\nExpected:\n${initialMathContent}\nActual:\n${s1RestoredMathContent}`);
   }
   console.log('[S1 PASS] math.ts was restored bit-for-bit to initial state.');
+
+  // Verify deletion of created src/version.ts
+  if (fs.existsSync(versionFilePath)) {
+    throw new Error('Scenario 1 failed: src/version.ts was NOT deleted during rollback!');
+  }
+  console.log('[S1 PASS] src/version.ts was cleanly deleted by rollback.');
 
   editAgent.clearActivities();
 
   // ----------------------------------------------------
-  // QA Scenario 2: Model Modifies math.ts + Accept Verification
+  // QA Scenario 2: Model File Modification + Accept
   // ----------------------------------------------------
   console.log('\n====================================================');
   console.log('QA SCENARIO 2: Model File Modification + Accept');
   console.log('====================================================');
 
-  const s2Prompt = `Inspect src/math.ts with read_file. Then use replace_in_file to add a subtract function:
-export function subtract(a: number, b: number): number {
-  return a - b;
+  const s2Prompt = `Inspect src/math.ts with read_file. Then use replace_in_file to add a multiply function:
+export function multiply(a: number, b: number): number {
+  return a * b;
 }`;
 
   console.log(`[S2] Prompting Edit Agent: "${s2Prompt.slice(0, 70)}..."`);
@@ -195,8 +245,8 @@ export function subtract(a: number, b: number): number {
   if (!s2CheckpointId) throw new Error('Scenario 2 failed: No checkpointId generated!');
 
   const s2DiskContent = fs.readFileSync(path.join(qaDir, 'src', 'math.ts'), 'utf8');
-  if (!s2DiskContent.includes('subtract')) {
-    throw new Error('Scenario 2 failed: math.ts does not contain subtract function!');
+  if (!s2DiskContent.includes('multiply')) {
+    throw new Error('Scenario 2 failed: math.ts does not contain multiply function!');
   }
 
   // Accept Checkpoint

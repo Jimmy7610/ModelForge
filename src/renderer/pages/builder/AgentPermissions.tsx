@@ -16,6 +16,9 @@ export const AgentPermissions: React.FC = () => {
   const handleModeClick = (mode: PermissionLevel) => {
     if (mode === 'READ') {
       setPermissionLevel('READ');
+      if (typeof window !== 'undefined' && window.modelForge?.disableEdit) {
+        window.modelForge.disableEdit().catch(console.error);
+      }
     } else if (mode === 'EDIT') {
       if (permissionLevel === 'EDIT') return;
       if (!activeProject) {
@@ -24,7 +27,7 @@ export const AgentPermissions: React.FC = () => {
       }
       setEditPermissionModalOpen(true);
     } else {
-      addToast(`${mode} mode is locked in v0.5.0.`, 'info');
+      addToast(`${mode} mode is locked in v0.5.1.`, 'info');
     }
   };
 

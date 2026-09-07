@@ -11,6 +11,8 @@ import {
 import { CheckpointError } from './errors';
 import { isBinaryFile, isIgnoredDirectory, isSensitiveFile } from '../workspace/file-policy';
 import { normalizeWorkspacePath } from '../workspace/path-policy';
+import { WorkspaceGuard } from '../workspace/guard';
+import { CHECKPOINT_SCHEMA_VERSION } from '../../shared/constants';
 
 export class CheckpointService {
   private readonly baseStorageDir: string;
@@ -18,9 +20,9 @@ export class CheckpointService {
 
   constructor(customBaseDir?: string, maxTransactionBytes = 50 * 1024 * 1024) {
     if (customBaseDir) {
-      this.baseStorageDir = customBaseDir;
+      this.baseStorageDir = path.resolve(customBaseDir);
     } else if (process.env.MODELFORGE_CHECKPOINTS_DIR) {
-      this.baseStorageDir = process.env.MODELFORGE_CHECKPOINTS_DIR;
+      this.baseStorageDir = path.resolve(process.env.MODELFORGE_CHECKPOINTS_DIR);
     } else {
       let userDataDir: string | undefined;
       try {
@@ -33,8 +35,8 @@ export class CheckpointService {
         // Not in Electron main runtime (e.g. unit tests)
       }
       this.baseStorageDir = userDataDir
-        ? path.join(userDataDir, 'checkpoints')
-        : path.join(os.homedir(), '.model-forge', 'checkpoints');
+        ? path.resolve(userDataDir, 'checkpoints')
+        : path.resolve(os.homedir(), '.model-forge', 'checkpoints');
     }
     this.maxTransactionBytes = maxTransactionBytes;
 
@@ -47,16 +49,92 @@ export class CheckpointService {
     }
   }
 
+  /**
+   * Validates that an identifier does not contain path separators, traversal, or invalid characters.
+   */
+  public static isValidProjectId(id: unknown): id is string {
+    if (typeof id !== 'string' || !id.trim() || id.length > 128) {
+      return false;
+    }
+    if (!/^[a-zA-Z0-9_\-\.]+$/.test(id)) {
+      return false;
+    }
+    const lower = id.toLowerCase();
+    if (
+      id === '.' ||
+      id === '..' ||
+      id.includes('..') ||
+      id.includes('/') ||
+      id.includes('\\') ||
+      id.includes(':') ||
+      id.includes('\0') ||
+      lower.includes('%2e') ||
+      lower.includes('%2f') ||
+      lower.includes('%5c') ||
+      lower.includes('%00')
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Validates that a checkpoint identifier matches the strict internal format.
+   */
+  public static isValidCheckpointId(id: unknown): id is string {
+    if (typeof id !== 'string' || !id.trim() || id.length > 128) {
+      return false;
+    }
+    if (!/^chk_[a-zA-Z0-9_\-]+$/.test(id)) {
+      return false;
+    }
+    const lower = id.toLowerCase();
+    if (
+      id.includes('..') ||
+      id.includes('/') ||
+      id.includes('\\') ||
+      id.includes(':') ||
+      id.includes('\0') ||
+      lower.includes('%2e') ||
+      lower.includes('%2f') ||
+      lower.includes('%5c') ||
+      lower.includes('%00')
+    ) {
+      return false;
+    }
+    return true;
+  }
+
   public getBaseStorageDir(): string {
     return this.baseStorageDir;
   }
 
   public getProjectCheckpointsDir(projectId: string): string {
-    return path.join(this.baseStorageDir, projectId);
+    if (!CheckpointService.isValidProjectId(projectId)) {
+      throw new CheckpointError(`Invalid project identifier: "${projectId}"`);
+    }
+    const resolved = path.resolve(this.baseStorageDir, projectId);
+    const rel = path.relative(this.baseStorageDir, resolved);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new CheckpointError(`Project checkpoint path escape detected: "${projectId}"`);
+    }
+    return resolved;
   }
 
   public getCheckpointDir(projectId: string, checkpointId: string): string {
-    return path.join(this.baseStorageDir, projectId, checkpointId);
+    if (!CheckpointService.isValidProjectId(projectId)) {
+      throw new CheckpointError(`Invalid project identifier: "${projectId}"`);
+    }
+    if (!CheckpointService.isValidCheckpointId(checkpointId)) {
+      throw new CheckpointError(`Invalid checkpoint identifier: "${checkpointId}"`);
+    }
+    const projDir = this.getProjectCheckpointsDir(projectId);
+    const resolved = path.resolve(projDir, checkpointId);
+    const rel = path.relative(projDir, resolved);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new CheckpointError(`Checkpoint path escape detected: "${checkpointId}"`);
+    }
+    return resolved;
   }
 
   private getManifestPath(projectId: string, checkpointId: string): string {
@@ -71,11 +149,15 @@ export class CheckpointService {
     projectRoot: string,
     description?: string
   ): CheckpointManifest {
+    if (!CheckpointService.isValidProjectId(projectId)) {
+      throw new CheckpointError(`Invalid project identifier: "${projectId}"`);
+    }
     const checkpointId = `chk_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const manifest: CheckpointManifest = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
       id: checkpointId,
       projectId,
-      projectRoot,
+      projectRoot: path.resolve(projectRoot),
       timestamp: new Date().toISOString(),
       type: 'automatic',
       status: 'armed',
@@ -136,25 +218,25 @@ export class CheckpointService {
   public async rollbackCheckpoint(
     checkpointId: string,
     projectId: string,
-    _guard?: any
+    guard?: WorkspaceGuard | string
   ): Promise<RollbackResult> {
-    const overrideRoot = _guard?.canonicalRootPath;
-    return this.rollback(checkpointId, projectId, overrideRoot);
+    return this.rollback(checkpointId, projectId, guard);
   }
 
-  public async acceptCheckpoint(checkpointId: string, projectId: string): Promise<void> {
-    const manifest = this.loadManifest(projectId, checkpointId);
-    if (!manifest) {
-      throw new CheckpointError(`Checkpoint not found: ${checkpointId}`);
+  public async acceptCheckpoint(
+    checkpointId: string,
+    projectId: string,
+    target?: WorkspaceGuard | string
+  ): Promise<void> {
+    const res = this.accept(checkpointId, projectId, target);
+    if (!res.success) {
+      throw new CheckpointError(`Failed to accept checkpoint: ${checkpointId}`);
     }
-    manifest.status = 'accepted';
-    this.saveManifest(manifest);
-    this.cleanupOldCheckpoints(projectId);
   }
 
   public async scanForInterruptedCheckpoints(projectId: string): Promise<CheckpointSummary[]> {
     const list = this.listCheckpoints(projectId);
-    return list.filter((c) => c.status === 'pending' || c.status === 'interrupted');
+    return list.filter((c) => c.status === 'pending' || c.status === 'interrupted' || c.status === 'conflict');
   }
 
   /**
@@ -274,7 +356,7 @@ export class CheckpointService {
   }
 
   /**
-   * Saves the manifest to disk.
+   * Saves the manifest to disk atomically using a temp file and rename.
    */
   public saveManifest(manifest: CheckpointManifest): void {
     const manifestPath = this.getManifestPath(manifest.projectId, manifest.id);
@@ -282,32 +364,92 @@ export class CheckpointService {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+    const tempPath = path.join(dir, `manifest.tmp.${Date.now()}.${crypto.randomBytes(4).toString('hex')}`);
+    fs.writeFileSync(tempPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+    try {
+      if (process.platform === 'win32' && fs.existsSync(manifestPath)) {
+        try {
+          fs.unlinkSync(manifestPath);
+        } catch {
+          // ignore unlink error before rename
+        }
+      }
+      fs.renameSync(tempPath, manifestPath);
+    } catch (err) {
+      try {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+      } catch {
+        // ignore cleanup error
+      }
+      throw new CheckpointError(`Failed to atomically save checkpoint manifest: ${err}`);
+    }
   }
 
   /**
-   * Loads a manifest from disk.
+   * Loads a manifest from disk with strict schema version, namespace, and integrity checks.
    */
   public loadManifest(projectId: string, checkpointId: string): CheckpointManifest | null {
-    const manifestPath = this.getManifestPath(projectId, checkpointId);
-    if (!fs.existsSync(manifestPath)) {
-      return null;
-    }
     try {
+      const manifestPath = this.getManifestPath(projectId, checkpointId);
+      if (!fs.existsSync(manifestPath)) {
+        return null;
+      }
       const content = fs.readFileSync(manifestPath, 'utf8');
-      return JSON.parse(content) as CheckpointManifest;
-    } catch {
+      const manifest = JSON.parse(content) as CheckpointManifest;
+
+      if (!manifest || typeof manifest !== 'object') {
+        throw new CheckpointError('Malformed checkpoint manifest');
+      }
+
+      // Check schemaVersion
+      if (typeof manifest.schemaVersion !== 'number' || manifest.schemaVersion > CHECKPOINT_SCHEMA_VERSION) {
+        throw new CheckpointError(`Unsupported checkpoint schema version: ${manifest?.schemaVersion}`);
+      }
+
+      // Namespace validation
+      if (manifest.projectId !== projectId) {
+        throw new CheckpointError(
+          `Checkpoint project ID mismatch: manifest belongs to "${manifest.projectId}", requested for "${projectId}"`
+        );
+      }
+
+      if (manifest.id !== checkpointId) {
+        throw new CheckpointError(
+          `Checkpoint ID mismatch: manifest ID "${manifest.id}" does not match requested "${checkpointId}"`
+        );
+      }
+
+      return manifest;
+    } catch (err) {
+      if (err instanceof CheckpointError) throw err;
       return null;
     }
   }
 
   /**
-   * Marks a pending checkpoint as accepted.
+   * Marks a pending checkpoint as accepted after validating registered project authority.
    */
-  public accept(checkpointId: string, projectId: string): { success: boolean } {
+  public accept(
+    checkpointId: string,
+    projectId: string,
+    authoritativeTarget?: WorkspaceGuard | string
+  ): { success: boolean } {
     const manifest = this.loadManifest(projectId, checkpointId);
     if (!manifest) {
       throw new CheckpointError(`Checkpoint not found: ${checkpointId}`);
+    }
+
+    if (authoritativeTarget) {
+      const canonicalTarget =
+        authoritativeTarget instanceof WorkspaceGuard
+          ? authoritativeTarget.canonicalRootPath
+          : path.resolve(authoritativeTarget);
+      const canonicalManifestRoot = path.resolve(manifest.projectRoot);
+      if (canonicalTarget !== canonicalManifestRoot) {
+        throw new CheckpointError('Checkpoint workspace location no longer matches the registered project.');
+      }
     }
 
     manifest.status = 'accepted';
@@ -319,11 +461,34 @@ export class CheckpointService {
 
   /**
    * Restores files to their exact pre-edit baseline.
-   * Enforces conflict protection: if a file was modified externally after the agent edited it,
-   * rollback is rejected with ROLLBACK CONFLICT.
+   *
+   * SECURITY ENFORCEMENTS:
+   * 1. manifest.projectRoot is NEVER trusted as authorization; registered project guard is authoritative.
+   * 2. Every relative path is re-validated through WorkspaceGuard.resolveWritePath().
+   * 3. Backup file names must match strict format ^[a-f0-9]{64}\.bak$ and resolve strictly inside files/.
+   * 4. Backup SHA-256 integrity is checked before restoration.
+   * 5. Preflight is ALL-OR-NOTHING: any conflict or validation failure aborts before ANY file is modified.
    */
-  public rollback(checkpointId: string, projectId: string, overrideRoot?: string): RollbackResult {
-    const manifest = this.loadManifest(projectId, checkpointId);
+  public rollback(
+    checkpointId: string,
+    projectId: string,
+    authoritativeTarget?: WorkspaceGuard | string
+  ): RollbackResult {
+    let manifest: CheckpointManifest | null = null;
+    try {
+      manifest = this.loadManifest(projectId, checkpointId);
+    } catch (err: any) {
+      return {
+        success: false,
+        checkpointId,
+        restoredFiles: [],
+        deletedCreatedFiles: [],
+        cleanedDirs: [],
+        conflicts: [],
+        error: err.message || `Malformed checkpoint: ${checkpointId}`,
+      };
+    }
+
     if (!manifest) {
       return {
         success: false,
@@ -336,32 +501,208 @@ export class CheckpointService {
       };
     }
 
+    let guard: WorkspaceGuard;
+    if (authoritativeTarget instanceof WorkspaceGuard) {
+      guard = authoritativeTarget;
+    } else if (typeof authoritativeTarget === 'string') {
+      guard = new WorkspaceGuard(authoritativeTarget);
+    } else {
+      guard = new WorkspaceGuard(manifest.projectRoot);
+    }
+
+    const canonicalTarget = guard.canonicalRootPath;
+    const canonicalManifestRoot = path.resolve(manifest.projectRoot);
+    if (canonicalTarget !== canonicalManifestRoot) {
+      return {
+        success: false,
+        checkpointId,
+        restoredFiles: [],
+        deletedCreatedFiles: [],
+        cleanedDirs: [],
+        conflicts: [],
+        error: 'Checkpoint workspace location no longer matches the registered project.',
+      };
+    }
+
     const checkpointDir = this.getCheckpointDir(projectId, checkpointId);
-    const projectRoot = overrideRoot || manifest.projectRoot;
+    const filesDir = path.join(checkpointDir, 'files');
     const conflicts: Array<{ relativePath: string; reason: string }> = [];
 
-    // Step 1: Pre-flight conflict check across all touched files
-    for (const [relPath, entry] of Object.entries(manifest.files)) {
-      const currentDiskPath = path.join(projectRoot, relPath);
-      const currentExists = fs.existsSync(currentDiskPath);
+    interface ValidatedItem {
+      relPath: string;
+      entry: CheckpointFileEntry;
+      targetCanonicalPath: string;
+      backupBytes: Buffer | null;
+    }
 
-      if (entry.lastAgentSha256 && currentExists) {
-        try {
-          const currentBuf = fs.readFileSync(currentDiskPath);
-          const currentHash = crypto.createHash('sha256').update(currentBuf).digest('hex');
-          if (currentHash !== entry.lastAgentSha256) {
+    const validatedItems: ValidatedItem[] = [];
+
+    // ==========================================
+    // STEP 1: ALL-OR-NOTHING PREFLIGHT
+    // ==========================================
+    for (const [relPath, entry] of Object.entries(manifest.files)) {
+      // Path syntax check
+      if (
+        !relPath ||
+        typeof relPath !== 'string' ||
+        path.isAbsolute(relPath) ||
+        relPath.includes('..') ||
+        relPath.includes('\0') ||
+        relPath.includes(':')
+      ) {
+        return {
+          success: false,
+          checkpointId,
+          restoredFiles: [],
+          deletedCreatedFiles: [],
+          cleanedDirs: [],
+          conflicts: [],
+          error: `Invalid or unsafe path in checkpoint manifest: "${relPath}"`,
+        };
+      }
+
+      // Authoritative workspace containment validation
+      let targetCanonicalPath: string;
+      try {
+        const writeCheck = guard.resolveWritePath(relPath);
+        if (!writeCheck.allowed) {
+          return {
+            success: false,
+            checkpointId,
+            restoredFiles: [],
+            deletedCreatedFiles: [],
+            cleanedDirs: [],
+            conflicts: [],
+            error: `Manifest path failed workspace containment validation: "${relPath}" (${writeCheck.error})`,
+          };
+        }
+        targetCanonicalPath = writeCheck.canonicalPath;
+      } catch (err: any) {
+        return {
+          success: false,
+          checkpointId,
+          restoredFiles: [],
+          deletedCreatedFiles: [],
+          cleanedDirs: [],
+          conflicts: [],
+          error: `Manifest path failed workspace containment validation: "${relPath}" (${err.message})`,
+        };
+      }
+
+      let backupBytes: Buffer | null = null;
+
+      if (entry.existedBefore) {
+        if (!entry.backupFileName || typeof entry.backupFileName !== 'string') {
+          return {
+            success: false,
+            checkpointId,
+            restoredFiles: [],
+            deletedCreatedFiles: [],
+            cleanedDirs: [],
+            conflicts: [],
+            error: `Missing backupFileName for existing file entry: "${relPath}"`,
+          };
+        }
+
+        // Strict backup filename format
+        if (!/^[a-f0-9]{64}\.bak$/.test(entry.backupFileName)) {
+          return {
+            success: false,
+            checkpointId,
+            restoredFiles: [],
+            deletedCreatedFiles: [],
+            cleanedDirs: [],
+            conflicts: [],
+            error: `Invalid or untrusted backup filename: "${entry.backupFileName}"`,
+          };
+        }
+
+        const backupFullPath = path.resolve(filesDir, entry.backupFileName);
+        const backupRel = path.relative(filesDir, backupFullPath);
+        if (backupRel.startsWith('..') || path.isAbsolute(backupRel)) {
+          return {
+            success: false,
+            checkpointId,
+            restoredFiles: [],
+            deletedCreatedFiles: [],
+            cleanedDirs: [],
+            conflicts: [],
+            error: `Backup path escape detected for: "${entry.backupFileName}"`,
+          };
+        }
+
+        if (!fs.existsSync(backupFullPath)) {
+          return {
+            success: false,
+            checkpointId,
+            restoredFiles: [],
+            deletedCreatedFiles: [],
+            cleanedDirs: [],
+            conflicts: [],
+            error: `Checkpoint backup file missing: "${entry.backupFileName}"`,
+          };
+        }
+
+        // Backup integrity check
+        backupBytes = fs.readFileSync(backupFullPath);
+        const backupSha256 = crypto.createHash('sha256').update(backupBytes).digest('hex');
+        if (entry.originalSha256 && backupSha256 !== entry.originalSha256) {
+          return {
+            success: false,
+            checkpointId,
+            restoredFiles: [],
+            deletedCreatedFiles: [],
+            cleanedDirs: [],
+            conflicts: [],
+            error: 'Checkpoint backup integrity verification failed.',
+          };
+        }
+
+        // External conflict check
+        if (entry.lastAgentSha256 && fs.existsSync(targetCanonicalPath)) {
+          try {
+            const currentDiskBytes = fs.readFileSync(targetCanonicalPath);
+            const currentDiskSha256 = crypto.createHash('sha256').update(currentDiskBytes).digest('hex');
+            if (currentDiskSha256 !== entry.lastAgentSha256) {
+              conflicts.push({
+                relativePath: relPath,
+                reason: 'File changed outside Model Forge after agent edit.',
+              });
+            }
+          } catch (err) {
             conflicts.push({
               relativePath: relPath,
-              reason: 'File changed outside Model Forge after agent edit.',
+              reason: `Unable to inspect current file for conflict: ${err}`,
             });
           }
-        } catch (err) {
-          conflicts.push({
-            relativePath: relPath,
-            reason: `Unable to inspect current file for conflict check: ${err}`,
-          });
+        }
+      } else {
+        // File did not exist before agent created it
+        if (entry.lastAgentSha256 && fs.existsSync(targetCanonicalPath)) {
+          try {
+            const currentDiskBytes = fs.readFileSync(targetCanonicalPath);
+            const currentDiskSha256 = crypto.createHash('sha256').update(currentDiskBytes).digest('hex');
+            if (currentDiskSha256 !== entry.lastAgentSha256) {
+              conflicts.push({
+                relativePath: relPath,
+                reason: 'File created by agent was modified outside Model Forge.',
+              });
+            }
+          } catch (err) {
+            conflicts.push({
+              relativePath: relPath,
+              reason: `Unable to inspect current file for conflict: ${err}`,
+            });
+          }
         }
       }
+
+      validatedItems.push({
+        relPath,
+        entry,
+        targetCanonicalPath,
+        backupBytes,
+      });
     }
 
     if (conflicts.length > 0) {
@@ -378,49 +719,41 @@ export class CheckpointService {
       };
     }
 
-    // Step 2: Perform atomic rollback operations
+    // ==========================================
+    // STEP 2: ATOMIC EXECUTION (ZERO WRITES BEFORE THIS POINT)
+    // ==========================================
     const restoredFiles: string[] = [];
     const deletedCreatedFiles: string[] = [];
     const cleanedDirs: string[] = [];
 
-    for (const [relPath, entry] of Object.entries(manifest.files)) {
-      const currentDiskPath = path.join(projectRoot, relPath);
-
-      if (!entry.existedBefore) {
-        // File did not exist before agent created it: delete it
-        if (fs.existsSync(currentDiskPath)) {
-          fs.unlinkSync(currentDiskPath);
-          deletedCreatedFiles.push(relPath);
+    for (const item of validatedItems) {
+      if (!item.entry.existedBefore) {
+        if (fs.existsSync(item.targetCanonicalPath)) {
+          fs.unlinkSync(item.targetCanonicalPath);
+          deletedCreatedFiles.push(item.relPath);
         }
 
-        // Clean up empty created parent directories bottom-up
-        if (entry.createdParentDirs && entry.createdParentDirs.length > 0) {
-          for (const dirRel of entry.createdParentDirs) {
-            const dirFull = path.join(projectRoot, dirRel);
+        if (item.entry.createdParentDirs && item.entry.createdParentDirs.length > 0) {
+          for (const dirRel of item.entry.createdParentDirs) {
             try {
-              if (fs.existsSync(dirFull) && fs.readdirSync(dirFull).length === 0) {
-                fs.rmdirSync(dirFull);
+              const checkDir = guard.resolveWritePath(dirRel);
+              if (checkDir.allowed && fs.existsSync(checkDir.canonicalPath) && fs.readdirSync(checkDir.canonicalPath).length === 0) {
+                fs.rmdirSync(checkDir.canonicalPath);
                 cleanedDirs.push(dirRel);
               }
             } catch {
-              // Ignore directory removal failure if not empty
+              // ignore directory removal error
             }
           }
         }
       } else {
-        // File existed before: restore exact original bytes
-        const backupPath = entry.backupFileName
-          ? path.join(checkpointDir, 'files', entry.backupFileName)
-          : null;
-
-        if (backupPath && fs.existsSync(backupPath)) {
-          const originalBytes = fs.readFileSync(backupPath);
-          const parentDir = path.dirname(currentDiskPath);
+        if (item.backupBytes) {
+          const parentDir = path.dirname(item.targetCanonicalPath);
           if (!fs.existsSync(parentDir)) {
             fs.mkdirSync(parentDir, { recursive: true });
           }
-          fs.writeFileSync(currentDiskPath, originalBytes);
-          restoredFiles.push(relPath);
+          fs.writeFileSync(item.targetCanonicalPath, item.backupBytes);
+          restoredFiles.push(item.relPath);
         }
       }
     }
@@ -440,7 +773,7 @@ export class CheckpointService {
   }
 
   /**
-   * Scans for any checkpoint with status 'pending' or 'interrupted' for crash recovery.
+   * Scans for any checkpoint with status 'pending', 'interrupted', or 'conflict' for crash recovery.
    */
   public getPendingCheckpoint(projectId: string): CheckpointSummary | null {
     const list = this.listCheckpoints(projectId);
@@ -452,20 +785,32 @@ export class CheckpointService {
    * Lists all checkpoints for a project.
    */
   public listCheckpoints(projectId: string): CheckpointSummary[] {
-    const projectDir = this.getProjectCheckpointsDir(projectId);
+    let projectDir: string;
+    try {
+      projectDir = this.getProjectCheckpointsDir(projectId);
+    } catch {
+      return [];
+    }
+
     if (!fs.existsSync(projectDir)) {
       return [];
     }
 
     const summaries: CheckpointSummary[] = [];
-    const entries = fs.readdirSync(projectDir);
+    let entries: string[] = [];
+    try {
+      entries = fs.readdirSync(projectDir);
+    } catch {
+      return [];
+    }
 
     for (const id of entries) {
-      const manifestPath = path.join(projectDir, id, 'manifest.json');
-      if (fs.existsSync(manifestPath)) {
-        try {
-          const content = fs.readFileSync(manifestPath, 'utf8');
-          const manifest = JSON.parse(content) as CheckpointManifest;
+      if (!CheckpointService.isValidCheckpointId(id)) {
+        continue;
+      }
+      try {
+        const manifest = this.loadManifest(projectId, id);
+        if (manifest) {
           summaries.push({
             id: manifest.id,
             projectId: manifest.projectId,
@@ -476,9 +821,9 @@ export class CheckpointService {
             filesCount: Object.keys(manifest.files).length,
             totalBackupBytes: manifest.totalBackupBytes,
           });
-        } catch {
-          // Skip corrupt manifests
         }
+      } catch {
+        // Skip corrupt or invalid manifests
       }
     }
 
@@ -493,7 +838,15 @@ export class CheckpointService {
     projectRoot: string,
     description?: string
   ): CheckpointSummary {
-    if (!fs.existsSync(projectRoot)) {
+    if (!CheckpointService.isValidProjectId(projectId)) {
+      throw new CheckpointError(`Invalid project identifier: "${projectId}"`);
+    }
+    if (description && (typeof description !== 'string' || description.length > 500)) {
+      throw new CheckpointError('Manual checkpoint description exceeds maximum allowed length (500 chars)');
+    }
+
+    const canonicalRoot = path.resolve(projectRoot);
+    if (!fs.existsSync(canonicalRoot)) {
       throw new CheckpointError(`Project root does not exist: ${projectRoot}`);
     }
 
@@ -503,9 +856,10 @@ export class CheckpointService {
     fs.mkdirSync(filesDir, { recursive: true });
 
     const manifest: CheckpointManifest = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
       id: checkpointId,
       projectId,
-      projectRoot,
+      projectRoot: canonicalRoot,
       timestamp: new Date().toISOString(),
       type: 'manual',
       status: 'accepted',
@@ -520,7 +874,7 @@ export class CheckpointService {
       const items = fs.readdirSync(currentDir, { withFileTypes: true });
       for (const item of items) {
         const fullPath = path.join(currentDir, item.name);
-        const rel = path.relative(projectRoot, fullPath);
+        const rel = path.relative(canonicalRoot, fullPath);
         const relPath = normalizeWorkspacePath(rel);
 
         if (item.isDirectory()) {
@@ -562,7 +916,7 @@ export class CheckpointService {
       }
     };
 
-    walk(projectRoot);
+    walk(canonicalRoot);
     manifest.totalBackupBytes = totalBytes;
     this.saveManifest(manifest);
     this.cleanupOldCheckpoints(projectId);
@@ -590,8 +944,8 @@ export class CheckpointService {
     if (nonPending.length > 5) {
       const toDelete = nonPending.slice(5);
       for (const item of toDelete) {
-        const dir = this.getCheckpointDir(projectId, item.id);
         try {
+          const dir = this.getCheckpointDir(projectId, item.id);
           fs.rmSync(dir, { recursive: true, force: true });
         } catch {
           // Ignore deletion error during cleanup

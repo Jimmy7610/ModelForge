@@ -267,6 +267,7 @@ export interface CheckpointFileEntry {
 }
 
 export interface CheckpointManifest {
+  schemaVersion: number;
   id: string;
   projectId: string;
   projectRoot: string;
@@ -401,6 +402,9 @@ export interface ModelForgeAPI {
   acceptCheckpoint: (checkpointId: string, projectId: string) => Promise<{ success: boolean }>;
   rollbackCheckpoint: (checkpointId: string, projectId: string) => Promise<RollbackResult>;
   createManualCheckpoint: (projectId: string, description?: string) => Promise<CheckpointSummary>;
+  enableEditForProject: (projectId: string) => Promise<{ authorized: boolean; authorizedProjectId: string | null }>;
+  disableEdit: () => Promise<void>;
+  getEditAuthorizationState: () => Promise<{ authorized: boolean; authorizedProjectId: string | null }>;
   onEditAgentActivity: (callback: (activity: AgentActivityItem) => void) => () => void;
   onEditAgentChunk: (callback: (chunk: ChatGenerationChunk) => void) => () => void;
   onEditAgentStateChange: (callback: (state: EditAgentState) => void) => () => void;

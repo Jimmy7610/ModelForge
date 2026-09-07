@@ -1,7 +1,8 @@
 import { AppSettings } from './types';
 
-export const APP_VERSION = '0.5.0';
+export const APP_VERSION = '0.5.1';
 export const SCHEMA_VERSION = 2;
+export const CHECKPOINT_SCHEMA_VERSION = 1;
 
 export const MAX_PROMPT_CHARS = 16000;
 export const DEFAULT_CONTEXT_TOKENS = 4096;
@@ -66,6 +67,9 @@ export const IPC_CHANNELS = {
   ACCEPT_CHECKPOINT: 'modelforge:accept-checkpoint',
   ROLLBACK_CHECKPOINT: 'modelforge:rollback-checkpoint',
   CREATE_MANUAL_CHECKPOINT: 'modelforge:create-manual-checkpoint',
+  ENABLE_EDIT_FOR_PROJECT: 'modelforge:enable-edit-for-project',
+  DISABLE_EDIT: 'modelforge:disable-edit',
+  GET_EDIT_AUTHORIZATION_STATE: 'modelforge:get-edit-authorization-state',
 
   // Read-Only Workspace Inspection Tools
   GET_PROJECT_OVERVIEW: 'modelforge:get-project-overview',

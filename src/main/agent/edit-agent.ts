@@ -394,7 +394,10 @@ export class EditAgent {
                 successfulToolCalls++;
                 filesCreated.add(res.relativePath);
                 act.done(`Created (${res.bytesWritten} bytes)`, displayLabel);
-                return JSON.stringify({ success: true, message: res.message });
+                return JSON.stringify({
+                  success: true,
+                  message: `${res.message} File created successfully. If all requested changes and file creations are complete, summarize your changes and state that tests were not executed. Otherwise continue with your remaining edits or file creations.`,
+                });
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 const isBlocked =
@@ -446,7 +449,7 @@ export class EditAgent {
                 act.done('Modified', displayLabel);
                 return JSON.stringify({
                   success: true,
-                  message: `${res.message} File edit successfully applied. Your task is complete. Summarize your changes and explicitly state that tests were not executed.`,
+                  message: `${res.message} File edit successfully applied. If all requested changes and file creations are complete, summarize your changes and state that tests were not executed. Otherwise continue with your remaining edits or file creations.`,
                 });
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
@@ -586,7 +589,8 @@ WORKFLOW:
 
 INSTRUCTION:
 First inspect the necessary files with read_file or list_directory.
-Then apply the requested code changes using replace_in_file, create_file, write_file, or delete_file.
+Then apply all requested code changes using replace_in_file, create_file, write_file, or delete_file.
+Be sure to perform every requested modification and file creation.
 Finally summarize the files modified and confirm completion.`;
 
       this.currentActivity = 'Model executing edits...';

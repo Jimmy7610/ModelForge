@@ -37,7 +37,7 @@ describe('Preload & Bridge Architecture Contract', () => {
     };
 
     expect(bridgeInfo.available).toBe(true);
-    expect(bridgeInfo.version).toBe('0.5.0');
+    expect(bridgeInfo.version).toBe('0.5.1');
     expect(bridgeInfo.preloadFormat).toBe('cjs');
   });
 
@@ -70,6 +70,9 @@ describe('Preload & Bridge Architecture Contract', () => {
         filesCount: 0,
         totalBackupBytes: 0,
       }),
+      enableEditForProject: async () => ({ authorized: true, authorizedProjectId: 'p' }),
+      disableEdit: async () => {},
+      getEditAuthorizationState: async () => ({ authorized: true, authorizedProjectId: 'p' }),
       getPendingCheckpoint: async () => null,
       getCheckpointDiff: async () => null,
     };
@@ -77,12 +80,15 @@ describe('Preload & Bridge Architecture Contract', () => {
     expect(dummyApi.getBridgeInfo).toBeDefined();
     const result = dummyApi.getBridgeInfo!();
     expect(result.available).toBe(true);
-    expect(result.version).toBe('0.5.0');
+    expect(result.version).toBe('0.5.1');
     expect(result.preloadFormat).toBe('cjs');
     expect(dummyApi.copyText).toBeDefined();
     expect(dummyApi.runEditAgent).toBeDefined();
     expect(dummyApi.acceptCheckpoint).toBeDefined();
     expect(dummyApi.rollbackCheckpoint).toBeDefined();
     expect(dummyApi.createManualCheckpoint).toBeDefined();
+    expect(dummyApi.enableEditForProject).toBeDefined();
+    expect(dummyApi.disableEdit).toBeDefined();
+    expect(dummyApi.getEditAuthorizationState).toBeDefined();
   });
 });

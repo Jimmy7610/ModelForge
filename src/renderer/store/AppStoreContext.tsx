@@ -650,6 +650,9 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
     if (typeof window !== 'undefined' && window.modelForge?.setActiveProject) {
       window.modelForge.setActiveProject(id).catch(console.error);
     }
+    if (typeof window !== 'undefined' && window.modelForge?.disableEdit) {
+      window.modelForge.disableEdit().catch(console.error);
+    }
   }, []);
 
   const refreshPendingCheckpointAndDiff = useCallback(async () => {
@@ -674,13 +677,50 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   useEffect(() => {
     refreshPendingCheckpointAndDiff();
+    if (typeof window !== 'undefined' && window.modelForge?.getEditAuthorizationState) {
+      window.modelForge
+        .getEditAuthorizationState()
+        .then((res) => {
+          if (res?.authorized && res?.authorizedProjectId === activeProjectId) {
+            setPermissionLevel('EDIT');
+          } else {
+            setPermissionLevel('READ');
+          }
+        })
+        .catch(() => {
+          setPermissionLevel('READ');
+        });
+    }
   }, [activeProjectId, refreshPendingCheckpointAndDiff]);
 
-  const confirmEnableEdit = useCallback(() => {
-    setPermissionLevel('EDIT');
-    setEditPermissionModalOpen(false);
-    addToast('Edit mode enabled for active project in this session.', 'info');
-  }, [addToast]);
+  const confirmEnableEdit = useCallback(async () => {
+    if (!activeProjectId) {
+      addToast('No active project selected.', 'warning');
+      return;
+    }
+
+    if (typeof window !== 'undefined' && window.modelForge?.enableEditForProject) {
+      try {
+        const res = await window.modelForge.enableEditForProject(activeProjectId);
+        if (res?.authorized) {
+          setPermissionLevel('EDIT');
+          setEditPermissionModalOpen(false);
+          addToast('Edit mode enabled for active project in this session.', 'info');
+        } else {
+          setPermissionLevel('READ');
+          addToast('Failed to enable Edit mode for project.', 'error');
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setPermissionLevel('READ');
+        addToast(`Failed to enable Edit mode: ${msg}`, 'error');
+      }
+    } else {
+      setPermissionLevel('EDIT');
+      setEditPermissionModalOpen(false);
+      addToast('Edit mode enabled for active project in this session.', 'info');
+    }
+  }, [activeProjectId, addToast]);
 
   const handleRunPlanAgent = useCallback(
     async (prompt: string) => {

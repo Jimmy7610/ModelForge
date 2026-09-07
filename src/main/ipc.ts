@@ -2,7 +2,7 @@ import { BrowserWindow, clipboard, dialog, ipcMain } from 'electron';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { AppSettings, ModelLibrary, ModelRecord, RunEditPayload, SendChatMessagePayload } from '../shared/types';
+import { AppSettings, ModelLibrary, ModelRecord, SendChatMessagePayload } from '../shared/types';
 
 import { IPC_CHANNELS, MAX_PROMPT_CHARS } from '../shared/constants';
 import { PersistenceStore } from './store';
@@ -12,7 +12,7 @@ import { normalizePath, scanDirectoriesForGguf } from './models/scanner';
 import { getDriveStorageForPath } from './models/storage';
 import { InferenceService } from './inference';
 import { EditAgent, PlanAgent } from './agent';
-import { DiffService } from './edit';
+import { DiffService, EditAuthorizationService } from './edit';
 import { WorkspaceGuard, WorkspaceTools } from './workspace';
 
 export function registerIpcHandlers(
@@ -21,11 +21,13 @@ export function registerIpcHandlers(
   registry: ModelRegistry,
   inferenceService: InferenceService,
   existingPlanAgent?: PlanAgent,
-  existingEditAgent?: EditAgent
+  existingEditAgent?: EditAgent,
+  existingEditAuth?: EditAuthorizationService
 ): void {
   const planAgent = existingPlanAgent || new PlanAgent(inferenceService);
   const editAgent = existingEditAgent || new EditAgent(inferenceService);
   const checkpointService = editAgent.getCheckpointService();
+  const editAuthorization = existingEditAuth || new EditAuthorizationService();
 
   // Setup inference callbacks for streaming and state sync
 
@@ -206,6 +208,9 @@ export function registerIpcHandlers(
     if (typeof id !== 'string' || !id.trim()) {
       return false;
     }
+    if (editAuthorization.getState().authorizedProjectId === id) {
+      editAuthorization.disable();
+    }
     store.removeProject(id);
     return true;
   });
@@ -215,7 +220,44 @@ export function registerIpcHandlers(
       return false;
     }
     store.setActiveProjectId(id);
+    // Active project switch immediately resets Edit authorization in Main memory
+    editAuthorization.disable();
     return true;
+  });
+
+  // Edit Authorization Handlers (Main Process Authoritative)
+  ipcMain.handle(IPC_CHANNELS.ENABLE_EDIT_FOR_PROJECT, (_event, rawProjectId: unknown) => {
+    let projectId: string;
+    if (typeof rawProjectId === 'string') {
+      projectId = rawProjectId.trim();
+    } else if (rawProjectId && typeof rawProjectId === 'object' && 'projectId' in rawProjectId) {
+      projectId = String((rawProjectId as any).projectId || '').trim();
+    } else {
+      throw new Error('Invalid payload for enableEditForProject: expected projectId string');
+    }
+
+    if (!projectId || projectId.length > 128) {
+      throw new Error('Invalid projectId for enableEditForProject: non-empty string up to 128 chars required');
+    }
+
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      editAuthorization.disable();
+      throw new Error(`Project not found in registry: "${projectId}"`);
+    }
+
+    const authorized = editAuthorization.enableForProject(project.id, true);
+    return { authorized, authorizedProjectId: authorized ? project.id : null };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.DISABLE_EDIT, () => {
+    editAuthorization.disable();
+    return { authorized: false, authorizedProjectId: null };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_EDIT_AUTHORIZATION_STATE, () => {
+    return editAuthorization.getState();
   });
 
 
@@ -480,11 +522,30 @@ export function registerIpcHandlers(
   });
 
   // Edit Agent & Checkpoint Handlers (Pass 5)
-  ipcMain.handle(IPC_CHANNELS.RUN_EDIT_AGENT, async (_event, payload: RunEditPayload) => {
+  ipcMain.handle(IPC_CHANNELS.RUN_EDIT_AGENT, async (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Invalid runEditAgent payload: expected object');
+    }
+    const input = payload as Record<string, unknown>;
+    if (typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 128) {
+      throw new Error('Invalid projectId: non-empty string required');
+    }
+    const projectId = input.projectId.trim();
+
+    if (typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > MAX_PROMPT_CHARS) {
+      throw new Error(`Invalid prompt: non-empty string up to ${MAX_PROMPT_CHARS} characters required`);
+    }
+    const prompt = input.prompt.trim();
+
+    // Enforce Main-side authorization boundary
+    if (!editAuthorization.isAuthorized(projectId)) {
+      throw new Error('Edit permission is not enabled for this project.');
+    }
+
     const projects = store.getProjects();
-    const project = projects.find((p) => p.id === payload.projectId);
+    const project = projects.find((p) => p.id === projectId);
     if (!project) {
-      throw new Error(`Project not found: ${payload.projectId}`);
+      throw new Error(`Project not found: ${projectId}`);
     }
 
     const runId = crypto.randomUUID();
@@ -493,7 +554,7 @@ export function registerIpcHandlers(
     editAgent
       .startEditing(
         project,
-        payload.prompt,
+        prompt,
         {
           onActivity: (act) => {
             if (!mainWindow.isDestroyed()) {
@@ -532,48 +593,120 @@ export function registerIpcHandlers(
     return editAgent.getState();
   });
 
-  ipcMain.handle(IPC_CHANNELS.GET_PENDING_CHECKPOINT, (_event, projectId: string) => {
-    return checkpointService.getPendingCheckpoint(projectId);
+  ipcMain.handle(IPC_CHANNELS.GET_PENDING_CHECKPOINT, (_event, rawProjectId: unknown) => {
+    if (typeof rawProjectId !== 'string' || !rawProjectId.trim() || rawProjectId.length > 128) {
+      throw new Error('Invalid projectId: non-empty string required');
+    }
+    const projectId = rawProjectId.trim();
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${projectId}`);
+    }
+    return checkpointService.getPendingCheckpoint(project.id);
   });
 
-  ipcMain.handle(
-    IPC_CHANNELS.GET_CHECKPOINT_DIFF,
-    (_event, { checkpointId, projectId }: { checkpointId: string; projectId: string }) => {
-      const manifest = checkpointService.loadManifest(projectId, checkpointId);
-      if (!manifest) {
-        throw new Error(`Checkpoint not found: ${checkpointId}`);
+  ipcMain.handle(IPC_CHANNELS.GET_CHECKPOINT_DIFF, (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Invalid getCheckpointDiff payload: expected object');
+    }
+    const input = payload as Record<string, unknown>;
+    if (typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 128) {
+      throw new Error('Invalid projectId');
+    }
+    if (typeof input.checkpointId !== 'string' || !input.checkpointId.trim() || input.checkpointId.length > 128) {
+      throw new Error('Invalid checkpointId');
+    }
+    const projectId = input.projectId.trim();
+    const checkpointId = input.checkpointId.trim();
+
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${projectId}`);
+    }
+    const registeredRoot = project.rootPath || project.path;
+    const manifest = checkpointService.loadManifest(project.id, checkpointId);
+    if (!manifest) {
+      throw new Error(`Checkpoint not found: ${checkpointId}`);
+    }
+    const checkpointDir = checkpointService.getCheckpointDir(project.id, checkpointId);
+    return DiffService.computeCheckpointDiff(manifest, checkpointDir, registeredRoot);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.ACCEPT_CHECKPOINT, (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Invalid acceptCheckpoint payload: expected object');
+    }
+    const input = payload as Record<string, unknown>;
+    if (typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 128) {
+      throw new Error('Invalid projectId');
+    }
+    if (typeof input.checkpointId !== 'string' || !input.checkpointId.trim() || input.checkpointId.length > 128) {
+      throw new Error('Invalid checkpointId');
+    }
+    const projectId = input.projectId.trim();
+    const checkpointId = input.checkpointId.trim();
+
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${projectId}`);
+    }
+    const registeredRoot = project.rootPath || project.path;
+    return checkpointService.accept(checkpointId, project.id, registeredRoot);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.ROLLBACK_CHECKPOINT, (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Invalid rollbackCheckpoint payload: expected object');
+    }
+    const input = payload as Record<string, unknown>;
+    if (typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 128) {
+      throw new Error('Invalid projectId');
+    }
+    if (typeof input.checkpointId !== 'string' || !input.checkpointId.trim() || input.checkpointId.length > 128) {
+      throw new Error('Invalid checkpointId');
+    }
+    const projectId = input.projectId.trim();
+    const checkpointId = input.checkpointId.trim();
+
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${projectId}`);
+    }
+    const registeredRoot = project.rootPath || project.path;
+    const guard = new WorkspaceGuard(registeredRoot);
+    return checkpointService.rollback(checkpointId, project.id, guard);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CREATE_MANUAL_CHECKPOINT, (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Invalid createManualCheckpoint payload: expected object');
+    }
+    const input = payload as Record<string, unknown>;
+    if (typeof input.projectId !== 'string' || !input.projectId.trim() || input.projectId.length > 128) {
+      throw new Error('Invalid projectId');
+    }
+    const projectId = input.projectId.trim();
+
+    let description: string | undefined;
+    if (input.description !== undefined) {
+      if (typeof input.description !== 'string' || input.description.length > 500) {
+        throw new Error('Description must be a string up to 500 characters');
       }
-      const checkpointDir = checkpointService.getCheckpointDir(projectId, checkpointId);
-      return DiffService.computeCheckpointDiff(manifest, checkpointDir, manifest.projectRoot);
+      description = input.description;
     }
-  );
 
-  ipcMain.handle(
-    IPC_CHANNELS.ACCEPT_CHECKPOINT,
-    (_event, { checkpointId, projectId }: { checkpointId: string; projectId: string }) => {
-      return checkpointService.accept(checkpointId, projectId);
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${projectId}`);
     }
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.ROLLBACK_CHECKPOINT,
-    (_event, { checkpointId, projectId }: { checkpointId: string; projectId: string }) => {
-      return checkpointService.rollback(checkpointId, projectId);
-    }
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.CREATE_MANUAL_CHECKPOINT,
-    (_event, { projectId, description }: { projectId: string; description?: string }) => {
-      const projects = store.getProjects();
-      const project = projects.find((p) => p.id === projectId);
-      if (!project) {
-        throw new Error(`Project not found: ${projectId}`);
-      }
-      const projectPath = project.rootPath || project.path;
-      return checkpointService.createManualCheckpoint(projectId, projectPath, description);
-    }
-  );
+    const registeredRoot = project.rootPath || project.path;
+    return checkpointService.createManualCheckpoint(project.id, registeredRoot, description);
+  });
 
   // System & Clipboard (Pass 4.1)
   ipcMain.handle(IPC_CHANNELS.COPY_TEXT, (_event, text: unknown) => {

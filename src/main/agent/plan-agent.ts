@@ -206,6 +206,16 @@ export class PlanAgent {
               distinctToolNames.add('get_project_overview');
               const act = recordActivity('Inspecting project overview...', 'get_project_overview');
 
+              if (successfulToolCalls >= 6 && distinctToolNames.size >= 2) {
+                act.done('Inspection complete', 'Inspected project overview');
+                const msg = JSON.stringify({
+                  status: 'inspection_complete',
+                  message: 'Sufficient codebase context has been gathered. Do not call any more tools. Please synthesize your full architecture and implementation plan now.',
+                });
+                budget.recordToolCall(msg.length);
+                return msg;
+              }
+
               const budgetCheck = budget.checkBudget();
               if (!budgetCheck.allowed) {
                 blockedToolCalls++;
@@ -247,6 +257,16 @@ export class PlanAgent {
               const displayTarget = targetPath.trim() === '' || targetPath === '.' ? 'project root' : targetPath;
               const displayLabel = `Listed ${displayTarget}`;
               const act = recordActivity(`Listing ${displayTarget}...`, 'list_directory', args);
+
+              if (successfulToolCalls >= 6 && distinctToolNames.size >= 2) {
+                act.done('Inspection complete', displayLabel);
+                const msg = JSON.stringify({
+                  status: 'inspection_complete',
+                  message: 'Sufficient codebase context has been gathered. Do not call any more tools. Please synthesize your full architecture and implementation plan now.',
+                });
+                budget.recordToolCall(msg.length);
+                return msg;
+              }
 
               const budgetCheck = budget.checkBudget();
               if (!budgetCheck.allowed) {
@@ -309,6 +329,16 @@ export class PlanAgent {
               const displayLabel = `Read ${args?.path}`;
               const act = recordActivity(`Reading ${args?.path}...`, 'read_file', args);
 
+              if (successfulToolCalls >= 6 && distinctToolNames.size >= 2) {
+                act.done('Inspection complete', displayLabel);
+                const msg = JSON.stringify({
+                  status: 'inspection_complete',
+                  message: 'Sufficient codebase context has been gathered. Do not call any more tools. Please synthesize your full architecture and implementation plan now.',
+                });
+                budget.recordToolCall(msg.length);
+                return msg;
+              }
+
               const budgetCheck = budget.checkBudget();
               if (!budgetCheck.allowed) {
                 blockedToolCalls++;
@@ -370,6 +400,16 @@ export class PlanAgent {
               }
               const displayLabel = `Searched "${searchTerm}"`;
               const act = recordActivity(`Searching "${searchTerm}"...`, 'search_text', args);
+
+              if (successfulToolCalls >= 6 && distinctToolNames.size >= 2) {
+                act.done('Inspection complete', displayLabel);
+                const msg = JSON.stringify({
+                  status: 'inspection_complete',
+                  message: 'Sufficient codebase context has been gathered. Do not call any more tools. Please synthesize your full architecture and implementation plan now.',
+                });
+                budget.recordToolCall(msg.length);
+                return msg;
+              }
 
               const budgetCheck = budget.checkBudget();
               if (!budgetCheck.allowed) {
@@ -462,13 +502,17 @@ Step 1: Inspect the workspace directory structure using list_directory, and read
       this.currentActivity = 'Model analyzing project...';
       notifyState();
 
+      let followUpCount = 0;
+      const maxFollowUps = 2;
       let synthesisDone = false;
       const followUpPrompt = async (): Promise<string | null> => {
         if (this.abortController?.signal.aborted) return null;
+        if (followUpCount >= maxFollowUps) return null;
+        followUpCount++;
         if (successfulToolCalls < 3 || distinctToolNames.size < 2) {
           return 'Now continue inspecting the codebase: inspect the source directory with list_directory or read key source files with read_file, or search for key symbols with search_text.';
         }
-        if (!synthesisDone) {
+        if (!synthesisDone && this.planContent.trim().length < 200) {
           synthesisDone = true;
           return 'Now synthesize and write the complete, detailed architecture analysis and step-by-step implementation plan based on all the real files and findings you inspected.';
         }

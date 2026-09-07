@@ -318,6 +318,52 @@ export class WorkspaceTools {
       }
     };
 
+    if (!fs.existsSync(startDir)) {
+      return {
+        query,
+        matches: [],
+        totalMatches: 0,
+        scannedFiles: 0,
+        truncated: false,
+      };
+    }
+
+    const startStat = fs.statSync(startDir);
+    if (startStat.isFile()) {
+      if (!isBinaryFile(startDir) && startStat.size <= MAX_READ_BYTES) {
+        try {
+          scannedFiles = 1;
+          const content = fs.readFileSync(startDir, 'utf8');
+          const lines = content.split(/\r?\n/);
+          const rel = normalizeWorkspacePath(path.relative(this.guard.canonicalRootPath, startDir));
+          for (let i = 0; i < lines.length; i++) {
+            if (matches.length >= maxMatches) {
+              truncated = true;
+              break;
+            }
+            const line = lines[i];
+            const testLine = caseSensitive ? line : line.toLowerCase();
+            if (testLine.includes(targetQuery)) {
+              matches.push({
+                file: rel,
+                line: i + 1,
+                content: line.trim().slice(0, 200),
+              });
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+      return {
+        query,
+        matches,
+        totalMatches: matches.length,
+        scannedFiles,
+        truncated,
+      };
+    }
+
     walkAndSearch(startDir);
 
     return {

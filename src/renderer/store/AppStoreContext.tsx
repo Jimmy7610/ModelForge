@@ -4,6 +4,7 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from 'react';
 import {
@@ -74,6 +75,7 @@ interface AppStoreContextType {
   agentActivities: AgentActivityItem[];
   agentPlanState: AgentPlanState | null;
   isPlanning: boolean;
+  activeRunId: string | null;
   runPlanAgent: (prompt: string) => Promise<void>;
   stopPlanAgent: () => Promise<boolean>;
   clearAgentActivities: () => void;
@@ -117,6 +119,9 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [agentActivities, setAgentActivities] = useState<AgentActivityItem[]>([]);
   const [agentPlanState, setAgentPlanState] = useState<AgentPlanState | null>(null);
   const [isPlanning, setIsPlanning] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const activeRunIdRef = useRef<string | null>(null);
+  activeRunIdRef.current = activeRunId;
 
 
   const addToast = useCallback((message: string, type: ToastItem['type'] = 'info') => {
@@ -250,6 +255,10 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
       let unsubscribeAgentActivity: (() => void) | undefined;
       if (window.modelForge.onAgentActivity) {
         unsubscribeAgentActivity = window.modelForge.onAgentActivity((activity) => {
+          if (activity.runId && activeRunIdRef.current && activity.runId !== activeRunIdRef.current) {
+            // Drop stale events from non-active run
+            return;
+          }
           setAgentActivities((prev) => {
             const idx = prev.findIndex((a) => a.id === activity.id);
             if (idx >= 0) {
@@ -265,6 +274,10 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
       let unsubscribeAgentState: (() => void) | undefined;
       if (window.modelForge.onAgentStateChange) {
         unsubscribeAgentState = window.modelForge.onAgentStateChange((state) => {
+          if (state.runId && activeRunIdRef.current && state.runId !== activeRunIdRef.current) {
+            // Drop stale state updates
+            return;
+          }
           setAgentPlanState(state);
           setIsPlanning(state.status === 'running');
         });
@@ -575,10 +588,14 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
 
       if (typeof window !== 'undefined' && window.modelForge?.runPlanAgent) {
         try {
-          await window.modelForge.runPlanAgent({
+          const res = await window.modelForge.runPlanAgent({
             projectId: activeProj.id,
             prompt,
           });
+          if (res?.runId) {
+            setActiveRunId(res.runId);
+            activeRunIdRef.current = res.runId;
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           addToast(`Planning failed: ${msg}`, 'error');
@@ -614,6 +631,8 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   const handleClearAgentActivities = useCallback(() => {
     setAgentActivities([]);
     setAgentPlanState(null);
+    setActiveRunId(null);
+    activeRunIdRef.current = null;
   }, []);
 
   // Global Ctrl+K shortcut listener
@@ -673,6 +692,7 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         agentActivities,
         agentPlanState,
         isPlanning,
+        activeRunId,
         runPlanAgent: handleRunPlanAgent,
         stopPlanAgent: handleStopPlanAgent,
         clearAgentActivities: handleClearAgentActivities,

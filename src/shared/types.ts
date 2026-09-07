@@ -150,6 +150,7 @@ export interface ChatMetrics {
 
 export interface ChatGenerationChunk {
   requestId: string;
+  runId?: string;
   text: string;
   isDone: boolean;
   error?: string;
@@ -188,10 +189,11 @@ export interface BridgeInfo {
   platform: string;
 }
 
-export type AgentActivityStatus = 'running' | 'done' | 'error';
+export type AgentActivityStatus = 'running' | 'done' | 'blocked' | 'error';
 
 export interface AgentActivityItem {
   id: string;
+  runId?: string;
   label: string;
   time: string;
   status: AgentActivityStatus;
@@ -203,12 +205,14 @@ export interface AgentActivityItem {
 export type AgentPlanStatus = 'idle' | 'running' | 'completed' | 'error';
 
 export interface AgentPlanState {
+  runId: string | null;
   status: AgentPlanStatus;
   activeProjectId: string | null;
   activities: AgentActivityItem[];
   currentActivity?: string;
   planContent?: string;
   error?: string;
+  successfulToolCallsCount?: number;
 }
 
 export interface RunPlanPayload {
@@ -250,7 +254,7 @@ export interface ModelForgeAPI {
   onInferenceStateChange: (callback: (state: InferenceState) => void) => () => void;
 
   // Plan Agent & Workspace Intelligence (Pass 4)
-  runPlanAgent: (payload: RunPlanPayload) => Promise<{ success: boolean; sessionId: string }>;
+  runPlanAgent: (payload: RunPlanPayload) => Promise<{ success: boolean; runId: string; sessionId: string }>;
   stopPlanAgent: () => Promise<boolean>;
   getAgentState: () => Promise<AgentPlanState>;
   onAgentActivity: (callback: (activity: AgentActivityItem) => void) => () => void;
@@ -258,10 +262,10 @@ export interface ModelForgeAPI {
   onAgentStateChange: (callback: (state: AgentPlanState) => void) => () => void;
 
   // Read-Only Workspace Inspection Tools
-  getProjectOverview: (projectId?: string) => Promise<unknown>;
-  listDirectory: (options?: { path?: string; recursive?: boolean; maxDepth?: number }) => Promise<unknown>;
-  readFile: (options: { path: string; startLine?: number; endLine?: number }) => Promise<unknown>;
-  searchText: (options: { query: string; path?: string; caseSensitive?: boolean; maxMatches?: number }) => Promise<unknown>;
+  getProjectOverview: (projectId?: string) => Promise<any>;
+  listDirectory: (options?: { projectId?: string; path?: string; recursive?: boolean; maxDepth?: number }) => Promise<any>;
+  readFile: (options: { projectId?: string; path: string; startLine?: number; endLine?: number }) => Promise<any>;
+  searchText: (options: { projectId?: string; query: string; path?: string; caseSensitive?: boolean; maxMatches?: number }) => Promise<any>;
 
   // Window Controls
   windowControl: (action: 'minimize' | 'maximize' | 'close') => Promise<void>;

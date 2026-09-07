@@ -227,6 +227,7 @@ export class WorkspaceTools {
       endLine,
       truncated,
       sizeBytes: stat.size,
+      isBinary: false,
     };
   }
 

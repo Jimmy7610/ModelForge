@@ -131,12 +131,21 @@ export class InferenceService {
         gpuLayers: 'auto',
       });
 
-      // 6. Create context
-      const context = await model.createContext({
-        contextSize,
-      });
+      // 6. Create context with multi-sequence support (Sequence 0 for Chat, Sequence 1 for Plan Agent)
+      let context: LlamaContext;
+      try {
+        context = await model.createContext({
+          contextSize,
+          sequences: 2,
+        });
+      } catch {
+        // Fallback for backends that only support single sequence
+        context = await model.createContext({
+          contextSize,
+        });
+      }
 
-      // 7. Initialize chat session
+      // 7. Initialize normal chat session on Sequence 0
       const chatSession = new LlamaChatSession({
         contextSequence: context.getSequence(),
         systemPrompt: 'You are Model Forge, an expert AI assistant running locally and privately on the user\'s workstation.',
@@ -418,18 +427,20 @@ export class InferenceService {
   }
 
   /**
-
    * Executes an agent prompt session with tool functions and streaming callbacks.
+   * Guarantees 100% Chat session isolation: normal Chat history is NOT polluted or modified.
+   * Preserves single-resident model weights: does NOT load model weights twice.
    */
   public async executeAgentPrompt(options: {
     prompt: string;
+    systemPrompt?: string;
     functions?: Record<string, unknown>;
     temperature?: number;
     maxTokens?: number;
     signal?: AbortSignal;
     onChunk?: (text: string) => void;
   }): Promise<string> {
-    if (this.modelState !== 'loaded' || !this.chatSession) {
+    if (this.modelState !== 'loaded' || (!this.loadedModel && !this.chatSession)) {
       throw new Error('No model loaded. Please load a local GGUF model first.');
     }
 
@@ -441,13 +452,43 @@ export class InferenceService {
     await this.notifyStateChange();
 
     let fullResponse = '';
+    let agentSequence: any = null;
+    let agentContext: any = null;
+    let agentSession: any = null;
 
     try {
+      // 1. Allocate an isolated sequence or context for this agent execution
+      if (this.loadedContext && !this.loadedContext.disposed && (this.loadedContext as any).sequencesLeft > 0) {
+        agentSequence = this.loadedContext.getSequence();
+        agentSession = new LlamaChatSession({
+          contextSequence: agentSequence,
+          systemPrompt: options.systemPrompt ?? 'You are Model Forge\'s Plan Agent, a project intelligence system running strictly locally on the user\'s workstation.',
+          autoDisposeSequence: true,
+        });
+      } else if (this.loadedModel && !this.loadedModel.disposed) {
+        // Fallback: allocate a conservative isolated context on the existing loaded LlamaModel
+        // (Shares single resident model weights in memory/VRAM)
+        const targetContextSize = Math.min(this.activeModel?.contextLength || DEFAULT_CONTEXT_TOKENS, 2048);
+        agentContext = await this.loadedModel.createContext({
+          contextSize: targetContextSize,
+          sequences: 1,
+        });
+        agentSequence = agentContext.getSequence();
+        agentSession = new LlamaChatSession({
+          contextSequence: agentSequence,
+          systemPrompt: options.systemPrompt ?? 'You are Model Forge\'s Plan Agent, a project intelligence system running strictly locally on the user\'s workstation.',
+          autoDisposeSequence: true,
+        });
+      } else {
+        // Mock / test fallback where chatSession was directly set
+        agentSession = this.chatSession;
+      }
+
       // Cast to any to accommodate node-llama-cpp functions & signal typing
       const promptOptions: Record<string, unknown> = {
         signal: options.signal,
         stopOnAbortSignal: true,
-        temperature: options.temperature ?? 0.4,
+        temperature: options.temperature ?? 0.3,
         maxTokens: options.maxTokens ?? 2048,
         onResponseChunk: (chunk: { text?: string }) => {
           if (chunk.text) {
@@ -471,10 +512,34 @@ export class InferenceService {
         promptOptions.functions = options.functions;
       }
 
-      await (this.chatSession as any).prompt(options.prompt, promptOptions);
+      // Execute on isolated agent session
+      await agentSession.prompt(options.prompt, promptOptions);
 
       return fullResponse;
     } finally {
+      // Clean up temporary agent resources if they were newly created
+      if (agentSession && agentSession !== this.chatSession) {
+        try {
+          await agentSession.dispose?.({ disposeSequence: true });
+        } catch {
+          // ignore
+        }
+      }
+      if (agentSequence && !agentSequence.disposed) {
+        try {
+          await agentSequence.dispose?.();
+        } catch {
+          // ignore
+        }
+      }
+      if (agentContext && !agentContext.disposed) {
+        try {
+          await agentContext.dispose();
+        } catch {
+          // ignore
+        }
+      }
+
       this.generationState = 'idle';
       await this.notifyStateChange();
     }

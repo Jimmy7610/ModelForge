@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Activity, Trash2, CheckCircle2, Eye, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
+import { Activity, Trash2, CheckCircle2, Eye, ShieldCheck, AlertCircle, Loader2, ShieldAlert } from 'lucide-react';
 
 import { useAppStore } from '@/store/AppStoreContext';
 import './AgentActivity.css';
@@ -8,7 +8,7 @@ interface ActivityStep {
   id: string;
   label: string;
   time: string;
-  status: 'done' | 'running' | 'error';
+  status: 'done' | 'running' | 'error' | 'blocked';
   detail?: string;
 }
 
@@ -108,6 +108,8 @@ export const AgentActivity: React.FC = () => {
                         <CheckCircle2 size={14} className="node-icon done" />
                       ) : step.status === 'running' ? (
                         <Loader2 size={14} className="node-icon running spinner" />
+                      ) : step.status === 'blocked' ? (
+                        <ShieldAlert size={14} className="node-icon blocked" />
                       ) : (
                         <AlertCircle size={14} className="node-icon error" />
                       )}
@@ -116,7 +118,7 @@ export const AgentActivity: React.FC = () => {
                   </div>
                   <div className="timeline-content">
                     <div className="timeline-label-row">
-                      <span className={`timeline-label ${step.status === 'running' ? 'running' : ''}`}>
+                      <span className={`timeline-label ${step.status === 'running' ? 'running' : step.status === 'blocked' ? 'blocked' : ''}`}>
                         {step.label}
                       </span>
                       <span className="timeline-time font-mono">{step.time}</span>

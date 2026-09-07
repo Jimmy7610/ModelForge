@@ -1,22 +1,22 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import { AgentActivityItem, AgentPlanState, Project } from '../../shared/types';
 import { WorkspaceGuard } from '../workspace/guard';
 import { WorkspaceTools } from '../workspace/tools';
 import { InferenceService } from '../inference/service';
 import { PlanAgentCallbacks } from './types';
+import { AgentBudget } from './budget';
 
 export class PlanAgent {
   private inferenceService: InferenceService;
   private status: AgentPlanState['status'] = 'idle';
   private activeProjectId: string | null = null;
+  private activeRunId: string | null = null;
   private activities: AgentActivityItem[] = [];
   private currentActivity?: string;
   private planContent = '';
   private error?: string;
+  private successfulToolCallsCount = 0;
   private abortController: AbortController | null = null;
-  private activeSessionId: string | null = null;
 
   constructor(inferenceService: InferenceService) {
     this.inferenceService = inferenceService;
@@ -24,12 +24,14 @@ export class PlanAgent {
 
   public getState(): AgentPlanState {
     return {
+      runId: this.activeRunId,
       status: this.status,
       activeProjectId: this.activeProjectId,
       activities: [...this.activities],
       currentActivity: this.currentActivity,
       planContent: this.planContent,
       error: this.error,
+      successfulToolCallsCount: this.successfulToolCallsCount,
     };
   }
 
@@ -54,19 +56,20 @@ export class PlanAgent {
     this.planContent = '';
     this.error = undefined;
     this.currentActivity = undefined;
+    this.successfulToolCallsCount = 0;
+    this.activeRunId = null;
   }
 
   public async startPlanning(
     project: Project,
     prompt: string,
-    callbacks?: PlanAgentCallbacks
+    callbacks?: PlanAgentCallbacks,
+    runId?: string
   ): Promise<string> {
     const projectPath = project.rootPath || project.path;
     if (!project || !projectPath) {
       throw new Error('Active project must be specified');
     }
-
-
 
     if (!prompt || !prompt.trim()) {
       throw new Error('Prompt cannot be empty');
@@ -80,14 +83,17 @@ export class PlanAgent {
       throw new Error('No model loaded. Please load a local GGUF model in the Models library first.');
     }
 
-    const sessionId = crypto.randomUUID();
-    this.activeSessionId = sessionId;
+    const currentRunId = runId || crypto.randomUUID();
+    this.activeRunId = currentRunId;
     this.status = 'running';
     this.activeProjectId = project.id;
     this.activities = [];
     this.planContent = '';
     this.error = undefined;
+    this.successfulToolCallsCount = 0;
     this.abortController = new AbortController();
+
+    const budget = new AgentBudget();
 
     const notifyState = () => {
       if (callbacks?.onStateChange) {
@@ -101,11 +107,17 @@ export class PlanAgent {
       label: string,
       toolName?: string,
       toolArgs?: Record<string, unknown>
-    ): { id: string; done: (detail?: string) => void; fail: (err: string) => void } => {
+    ): {
+      id: string;
+      done: (detail?: string, finalLabel?: string) => void;
+      blocked: (err: string, finalLabel?: string) => void;
+      fail: (err: string, finalLabel?: string) => void;
+    } => {
       const now = new Date();
       const timeStr = now.toTimeString().split(' ')[0]; // HH:MM:SS
       const item: AgentActivityItem = {
         id: crypto.randomUUID(),
+        runId: currentRunId,
         label,
         time: timeStr,
         status: 'running',
@@ -120,14 +132,23 @@ export class PlanAgent {
 
       return {
         id: item.id,
-        done: (detail?: string) => {
+        done: (detail?: string, finalLabel?: string) => {
           item.status = 'done';
+          if (finalLabel) item.label = finalLabel;
           if (detail) item.detail = detail;
           notifyState();
           callbacks?.onActivity?.(item);
         },
-        fail: (err: string) => {
+        blocked: (err: string, finalLabel?: string) => {
+          item.status = 'blocked';
+          if (finalLabel) item.label = finalLabel;
+          item.detail = err;
+          notifyState();
+          callbacks?.onActivity?.(item);
+        },
+        fail: (err: string, finalLabel?: string) => {
           item.status = 'error';
+          if (finalLabel) item.label = finalLabel;
           item.detail = err;
           notifyState();
           callbacks?.onActivity?.(item);
@@ -140,205 +161,261 @@ export class PlanAgent {
       const guard = new WorkspaceGuard(projectPath);
       const tools = new WorkspaceTools(guard);
 
-
-      // 2. Autonomous Project Reconnaissance
-      // Action A: get_project_overview
-      const actOverview = recordActivity('Inspected project overview', 'get_project_overview');
+      // 2. Allowed lightweight deterministic startup context (Metadata only, NO pre-scripted reads)
       const overview = await tools.getProjectOverview();
-      actOverview.done(`${overview.name} (${overview.languages.join(', ')})`);
 
-      if (this.abortController.signal.aborted) throw new Error('Planning cancelled');
-
-      // Action B: list_directory (check src or root)
-      const hasSrc = overview.topLevelDirectories.includes('src');
-      const listTarget = hasSrc ? 'src' : '';
-      const actList = recordActivity(hasSrc ? 'Listed src' : 'Listed project root', 'list_directory', { path: listTarget });
-      const dirList = await tools.listDirectory({ path: listTarget, recursive: true, maxDepth: 2 });
-      actList.done(`${dirList.entries.length} items`);
-
-      if (this.abortController.signal.aborted) throw new Error('Planning cancelled');
-
-      // Action C: read package.json if present
-      let pkgSummary = '';
-      if (overview.keyFiles.includes('package.json')) {
-        const actPkg = recordActivity('Read package.json', 'read_file', { path: 'package.json' });
-        const pkgRead = await tools.readFile({ path: 'package.json', endLine: 60 });
-        pkgSummary = pkgRead.content;
-        actPkg.done();
+      if (this.abortController.signal.aborted) {
+        throw new Error('Planning cancelled');
       }
 
-      if (this.abortController.signal.aborted) throw new Error('Planning cancelled');
-
-      // Action D: Read key source files (e.g. src/App.tsx, src/index.ts, src/game.ts)
-      const candidates = ['src/App.tsx', 'src/App.jsx', 'src/game.ts', 'src/index.ts', 'src/main.ts'];
-      let primarySourceSnippet = '';
-
-      for (const targetName of candidates) {
-        const fileExists = dirList.entries.some(e => e.relativePath === targetName) ||
-          fs.existsSync(path.join(guard.canonicalRootPath, targetName));
-
-        if (fileExists) {
-          const actRead = recordActivity(`Read ${targetName}`, 'read_file', { path: targetName });
-          const fileRes = await tools.readFile({ path: targetName, startLine: 1, endLine: 80 });
-          primarySourceSnippet = `\n--- ${targetName} ---\n` + fileRes.content;
-          actRead.done();
-          break;
-        }
-      }
-
-      if (this.abortController.signal.aborted) throw new Error('Planning cancelled');
-
-      // Action E: Search for domain concepts in the user prompt
-      const stopWords = new Set([
-        'this', 'that', 'with', 'from', 'project', 'explain', 'architecture',
-        'identify', 'important', 'files', 'propose', 'system', 'analyze',
-        'about', 'what', 'where', 'when', 'will', 'have', 'need', 'want', 'code'
-      ]);
-      const promptWords = prompt.toLowerCase().match(/[a-z]{4,}/g) || [];
-      const domainWords = promptWords.filter(w => !stopWords.has(w));
-
-      let searchSummary = '';
-      if (domainWords.length > 0) {
-        let searchTerm = domainWords[0];
-        if (searchTerm.endsWith('ies') && searchTerm.length > 5) {
-          searchTerm = searchTerm.slice(0, -3) + 'y';
-        } else if (searchTerm.endsWith('s') && !searchTerm.endsWith('ss') && searchTerm.length > 4) {
-          searchTerm = searchTerm.slice(0, -1);
-        }
-        const actSearch = recordActivity(`Searched "${searchTerm}"`, 'search_text', { query: searchTerm });
-        const searchRes = await tools.searchText({ query: searchTerm, maxMatches: 10 });
-        actSearch.done(`${searchRes.totalMatches} matches`);
-
-        if (searchRes.matches.length > 0) {
-          searchSummary = `\nMatches for "${searchTerm}":\n` +
-            searchRes.matches.slice(0, 5).map(m => `  ${m.file}:${m.line} -> ${m.content}`).join('\n');
-
-          // Read the matching file if not read yet
-          const topMatchFile = searchRes.matches[0].file;
-          if (!this.activities.some(a => a.label === `Read ${topMatchFile}`)) {
-            const actReadMatch = recordActivity(`Read ${topMatchFile}`, 'read_file', { path: topMatchFile });
-            await tools.readFile({ path: topMatchFile, endLine: 80 });
-            actReadMatch.done();
-          }
-        }
-      }
-
-      if (this.abortController.signal.aborted) throw new Error('Planning cancelled');
-
-      // 3. Dynamic Tools for the local model
+      // 3. Define Model-Driven Chat Session Functions
       let dynamicFunctions: Record<string, unknown> | undefined;
       try {
         const nlc = await import('node-llama-cpp');
-        if (typeof nlc.defineChatSessionFunction === 'function') {
-          dynamicFunctions = {
-            get_project_overview: nlc.defineChatSessionFunction({
-              description: 'Get project overview, architecture hints, languages, and dependencies',
-              params: { type: 'object', properties: {} },
-              handler: async () => {
+        const defineFn = nlc.defineChatSessionFunction || (nlc as any).default?.defineChatSessionFunction;
+
+        const buildFunctions = (fnWrapper: Function) => ({
+          get_project_overview: fnWrapper({
+            description: 'Inspect project high-level overview, languages, package manager, and top-level directory names.',
+            params: {
+              type: 'object',
+              properties: {},
+            },
+            handler: async () => {
+              const budgetCheck = budget.checkBudget();
+              if (!budgetCheck.allowed) {
                 const act = recordActivity('Inspected project overview', 'get_project_overview');
+                act.blocked(budgetCheck.reason || 'Budget exceeded');
+                return JSON.stringify({ error: budgetCheck.reason, blocked: true, budgetExceeded: true });
+              }
+
+              const act = recordActivity('Inspected project overview', 'get_project_overview');
+              try {
+                if (this.abortController?.signal.aborted) throw new Error('Planning cancelled');
                 const res = await tools.getProjectOverview();
-                act.done();
-                return JSON.stringify(res);
+                const bounded = budget.boundToolOutput(JSON.stringify(res, null, 2));
+                budget.recordToolCall(bounded.content.length);
+                this.successfulToolCallsCount++;
+                act.done(`${res.name} (${res.languages.join(', ') || 'General'})`, 'Inspected project overview');
+                return bounded.content;
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                act.fail(msg, 'Inspected project overview');
+                return JSON.stringify({ error: msg });
+              }
+            },
+          }),
+
+          list_directory: fnWrapper({
+            description: 'List entries (files and directories) within a workspace directory relative to the project root. For root, pass "" or ".".',
+            params: {
+              type: 'object',
+              properties: {
+                path: { type: 'string', description: 'Folder path relative to project root' },
+                recursive: { type: 'boolean', description: 'Whether to list subdirectories (max depth 2)' },
               },
-            }),
-            list_directory: nlc.defineChatSessionFunction({
-              description: 'List files and directories inside the active workspace',
-              params: {
-                type: 'object',
-                properties: {
-                  path: { type: 'string', description: 'Directory path relative to project root' },
-                },
+            },
+            handler: async (args: { path?: string; recursive?: boolean }) => {
+              const targetPath = args?.path || '';
+              const displayTarget = targetPath.trim() === '' || targetPath === '.' ? 'project root' : targetPath;
+              const displayLabel = `Listed ${displayTarget}`;
+
+              const budgetCheck = budget.checkBudget();
+              if (!budgetCheck.allowed) {
+                const act = recordActivity(displayLabel, 'list_directory', args);
+                act.blocked(budgetCheck.reason || 'Budget exceeded');
+                return JSON.stringify({ error: budgetCheck.reason, blocked: true, budgetExceeded: true });
+              }
+
+              const act = recordActivity(displayLabel, 'list_directory', args);
+              try {
+                if (this.abortController?.signal.aborted) throw new Error('Planning cancelled');
+                const res = await tools.listDirectory({
+                  path: targetPath,
+                  recursive: args?.recursive ?? false,
+                  maxDepth: 2,
+                });
+                const summary = `${res.entries.length} items`;
+                const bounded = budget.boundToolOutput(JSON.stringify(res.entries.map(e => ({
+                  name: e.name,
+                  path: e.relativePath,
+                  type: e.type === 'directory' ? 'dir' : 'file',
+                  size: e.sizeBytes,
+                  ignored: e.isIgnored,
+                })), null, 2));
+                budget.recordToolCall(bounded.content.length);
+                this.successfulToolCallsCount++;
+                act.done(summary, displayLabel);
+                return bounded.content;
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                const isBlocked = msg.includes('jail') || msg.includes('denied') || msg.includes('sensitive');
+                if (isBlocked) {
+                  act.blocked(msg, displayLabel);
+                } else {
+                  act.fail(msg, displayLabel);
+                }
+                return JSON.stringify({ error: msg, blocked: isBlocked });
+              }
+            },
+          }),
+
+          read_file: fnWrapper({
+            description: 'Read line-numbered text content of a file within the active workspace. Cannot read binary or sensitive files.',
+            params: {
+              type: 'object',
+              properties: {
+                path: { type: 'string', description: 'File path relative to the project root' },
+                startLine: { type: 'number', description: '1-indexed start line' },
+                endLine: { type: 'number', description: '1-indexed end line' },
               },
-              handler: async (args: { path?: string }) => {
-                const label = `Listed ${args.path || 'root'}`;
-                const act = recordActivity(label, 'list_directory', args);
-                const res = await tools.listDirectory({ path: args.path });
-                act.done();
-                return JSON.stringify(res);
-              },
-            }),
-            read_file: nlc.defineChatSessionFunction({
-              description: 'Read the contents of a text file within the workspace',
-              params: {
-                type: 'object',
-                properties: {
-                  path: { type: 'string', description: 'File path relative to project root' },
-                  startLine: { type: 'number' },
-                  endLine: { type: 'number' },
-                },
-                required: ['path'],
-              },
-              handler: async (args: { path: string; startLine?: number; endLine?: number }) => {
-                const label = `Read ${args.path}`;
-                const act = recordActivity(label, 'read_file', args);
+              required: ['path'],
+            },
+            handler: async (args: { path: string; startLine?: number; endLine?: number }) => {
+              const displayLabel = `Read ${args.path}`;
+
+              const budgetCheck = budget.checkBudget();
+              if (!budgetCheck.allowed) {
+                const act = recordActivity(displayLabel, 'read_file', args);
+                act.blocked(budgetCheck.reason || 'Budget exceeded');
+                return JSON.stringify({ error: budgetCheck.reason, blocked: true, budgetExceeded: true });
+              }
+
+              const act = recordActivity(displayLabel, 'read_file', args);
+              try {
+                if (this.abortController?.signal.aborted) throw new Error('Planning cancelled');
                 const res = await tools.readFile(args);
-                act.done();
-                return res.content;
+                if (res.isBinary) {
+                  act.blocked('Binary file cannot be displayed', displayLabel);
+                  return JSON.stringify({ error: 'Binary file cannot be displayed in text viewer', isBinary: true });
+                }
+
+                const bounded = budget.boundToolOutput(res.content);
+                budget.recordToolCall(bounded.content.length);
+                this.successfulToolCallsCount++;
+                act.done(`${res.totalLines} lines`, displayLabel);
+                return bounded.content;
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                const isBlocked = msg.includes('jail') || msg.includes('denied') || msg.includes('sensitive');
+                if (isBlocked) {
+                  act.blocked(msg, displayLabel);
+                } else {
+                  act.fail(msg, displayLabel);
+                }
+                return JSON.stringify({ error: msg, blocked: isBlocked });
+              }
+            },
+          }),
+
+          search_text: fnWrapper({
+            description: 'Search for text or symbol occurrences across project text files. Returns matching files, line numbers, and snippets.',
+            params: {
+              type: 'object',
+              properties: {
+                query: { type: 'string', description: 'Search term or symbol' },
+                path: { type: 'string', description: 'Subdirectory path to restrict search, or empty for all' },
               },
-            }),
-            search_text: nlc.defineChatSessionFunction({
-              description: 'Search for text in project source files',
-              params: {
-                type: 'object',
-                properties: {
-                  query: { type: 'string', description: 'Search term or symbol' },
-                },
-                required: ['query'],
-              },
-              handler: async (args: { query: string }) => {
-                const label = `Searched "${args.query}"`;
-                const act = recordActivity(label, 'search_text', args);
-                const res = await tools.searchText(args);
-                act.done();
-                return JSON.stringify(res);
-              },
-            }),
-          };
+              required: ['query'],
+            },
+            handler: async (args: { query: string; path?: string }) => {
+              let searchTerm = args.query;
+              if (searchTerm.endsWith('ies') && searchTerm.length > 5) {
+                searchTerm = searchTerm.slice(0, -3) + 'y';
+              } else if (searchTerm.endsWith('s') && !searchTerm.endsWith('ss') && searchTerm.length > 4) {
+                searchTerm = searchTerm.slice(0, -1);
+              }
+              const displayLabel = `Searched "${searchTerm}"`;
+
+              const budgetCheck = budget.checkBudget();
+              if (!budgetCheck.allowed) {
+                const act = recordActivity(displayLabel, 'search_text', args);
+                act.blocked(budgetCheck.reason || 'Budget exceeded');
+                return JSON.stringify({ error: budgetCheck.reason, blocked: true, budgetExceeded: true });
+              }
+
+              const act = recordActivity(displayLabel, 'search_text', args);
+              try {
+                if (this.abortController?.signal.aborted) throw new Error('Planning cancelled');
+                const res = await tools.searchText({
+                  query: searchTerm,
+                  path: args.path,
+                  maxMatches: budget.limits.maxSearchResultsPerCall,
+                });
+                const bounded = budget.boundToolOutput(JSON.stringify({
+                  totalMatches: res.totalMatches,
+                  matches: res.matches,
+                }, null, 2));
+                budget.recordToolCall(bounded.content.length);
+                this.successfulToolCallsCount++;
+                act.done(`${res.totalMatches} matches`, displayLabel);
+                return bounded.content;
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                const isBlocked = msg.includes('jail') || msg.includes('denied') || msg.includes('sensitive');
+                if (isBlocked) {
+                  act.blocked(msg, displayLabel);
+                } else {
+                  act.fail(msg, displayLabel);
+                }
+                return JSON.stringify({ error: msg, blocked: isBlocked });
+              }
+            },
+          }),
+        });
+
+        if (typeof defineFn === 'function') {
+          dynamicFunctions = buildFunctions(defineFn);
+        } else {
+          dynamicFunctions = buildFunctions((def: unknown) => def);
         }
       } catch {
-        // Fallback for mocked test runners
+        // Fallback for mocked/isolated test environments
       }
 
-      // 4. Model Planning Synthesis
+      // 4. Honest Model Prompting (Explicitly instructing tool usage before claims)
       const systemInstruction = `You are Model Forge's Plan Agent, a project intelligence system running strictly locally on the user's workstation.
-You have inspected the active workspace. Model Forge is operating in Safe Read-Only Mode.
-Your task is to analyze the project, explain its architecture, identify the important files, and propose a concrete step-by-step implementation plan for the user's goal.
+You are operating in Safe Read-Only Mode.
+
+You have read-only tools available:
+- list_directory: explore directory trees in the workspace
+- read_file: inspect source code and manifests
+- search_text: search for symbols, keywords, or method names
+- get_project_overview: review project architecture and tech stack
+
+INSTRUCTIONS:
+You have read-only tools available. Inspect relevant files before making project-specific claims.
+Do not assume file contents or structure without inspecting them.
+After inspecting the project with your tools, synthesize a comprehensive architectural and step-by-step implementation plan.
 
 PROJECT CONTEXT:
 - Project Name: ${overview.name}
 - Root Path: ${overview.canonicalRootPath}
 - Git Repository: ${overview.isGitRepository ? 'Yes' : 'No'}
-- Package Manager: ${overview.packageManager || 'None'}
+- Package Manager: ${overview.packageManager || 'None detected'}
 - Languages: ${overview.languages.join(', ') || 'None detected'}
 - Frameworks & Libraries: ${overview.frameworkHints.join(', ') || 'Standard'}
 - Top Directories: ${overview.topLevelDirectories.join(', ')}
-${pkgSummary ? `\nPACKAGE MANIFEST:\n${pkgSummary}\n` : ''}
-${primarySourceSnippet ? `\nPRIMARY SOURCE ENTRY:\n${primarySourceSnippet}\n` : ''}
-${searchSummary ? `\nSEARCH RESULTS:\n${searchSummary}\n` : ''}
+- Key Manifest Files: ${overview.keyFiles.join(', ')}`;
 
-INSTRUCTIONS:
-Produce a well-structured architectural and implementation plan with the following sections:
-1. Executive Summary & Architecture Overview
-2. Key Files & Components Identified
-3. Step-by-Step Implementation Strategy
-4. Verification & Testing Approach`;
+      const synthesisPrompt = `${systemInstruction}\n\nUSER REQUEST:\n${prompt}\n\nPlease inspect the workspace using your tools, and then provide the implementation plan:`;
 
-      const synthesisPrompt = `${systemInstruction}\n\nUSER REQUEST:\n${prompt}\n\nPlease generate the comprehensive implementation plan now:`;
-
-      this.currentActivity = 'Synthesizing architectural plan...';
+      this.currentActivity = 'Model analyzing project...';
       notifyState();
 
       const actPlan = recordActivity('Created architecture plan');
 
       const generatedPlan = await this.inferenceService.executeAgentPrompt({
         prompt: synthesisPrompt,
+        systemPrompt: systemInstruction,
         functions: dynamicFunctions,
         signal: this.abortController.signal,
         onChunk: (chunkText) => {
-          if (this.activeSessionId === sessionId) {
+          if (this.activeRunId === currentRunId) {
             this.planContent += chunkText;
             callbacks?.onChunk?.({
-              requestId: sessionId,
+              requestId: currentRunId,
+              runId: currentRunId,
               text: chunkText,
               isDone: false,
             });
@@ -347,15 +424,24 @@ Produce a well-structured architectural and implementation plan with the followi
       });
 
       this.planContent = generatedPlan || this.planContent;
+
+      // Tool use verification: warn user if model failed/refused to call tools
+      if (this.successfulToolCallsCount === 0) {
+        const warningNotice = '\n\n> ⚠️ This model did not successfully inspect the project with tools. Try another instruction-tuned or coding model.';
+        this.planContent += warningNotice;
+        this.currentActivity = 'This model did not successfully inspect the project with tools.';
+      } else {
+        this.currentActivity = `Plan completed successfully (${this.successfulToolCallsCount} tool calls executed).`;
+      }
+
       actPlan.done();
 
-      // Final completion
       this.status = 'completed';
-      this.currentActivity = 'Plan generated successfully.';
       notifyState();
 
       callbacks?.onChunk?.({
-        requestId: sessionId,
+        requestId: currentRunId,
+        runId: currentRunId,
         text: '',
         isDone: true,
       });
@@ -371,7 +457,8 @@ Produce a well-structured architectural and implementation plan with the followi
 
       if (!isAbort) {
         callbacks?.onChunk?.({
-          requestId: sessionId,
+          requestId: currentRunId,
+          runId: currentRunId,
           text: `\n\n[Planning Error: ${msg}]`,
           isDone: true,
           error: msg,
@@ -380,8 +467,7 @@ Produce a well-structured architectural and implementation plan with the followi
 
       throw err;
     } finally {
-      if (this.activeSessionId === sessionId) {
-        this.activeSessionId = null;
+      if (this.activeRunId === currentRunId) {
         this.abortController = null;
       }
     }

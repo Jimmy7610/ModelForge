@@ -137,6 +137,14 @@
   animation: spin 2s linear infinite;
 }
 
+.node-icon.blocked {
+  color: #f59e0b;
+}
+
+.node-icon.error {
+  color: var(--color-danger, #ef4444);
+}
+
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -171,6 +179,10 @@
 
 .timeline-label.running {
   color: #60a5fa;
+}
+
+.timeline-label.blocked {
+  color: #f59e0b;
 }
 
 .timeline-time {

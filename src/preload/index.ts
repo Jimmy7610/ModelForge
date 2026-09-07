@@ -138,7 +138,7 @@ const api: ModelForgeAPI = {
   },
 
   // Plan Agent & Workspace Intelligence (Pass 4)
-  runPlanAgent: (payload: RunPlanPayload): Promise<{ success: boolean; sessionId: string }> => {
+  runPlanAgent: (payload: RunPlanPayload): Promise<{ success: boolean; runId: string; sessionId: string }> => {
     return ipcRenderer.invoke(IPC_CHANNELS.RUN_PLAN_AGENT, payload);
   },
 
@@ -185,15 +185,15 @@ const api: ModelForgeAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_PROJECT_OVERVIEW, projectId);
   },
 
-  listDirectory: (options?: { path?: string; recursive?: boolean; maxDepth?: number }): Promise<unknown> => {
+  listDirectory: (options?: { projectId?: string; path?: string; recursive?: boolean; maxDepth?: number }): Promise<any> => {
     return ipcRenderer.invoke(IPC_CHANNELS.LIST_DIRECTORY, options);
   },
 
-  readFile: (options: { path: string; startLine?: number; endLine?: number }): Promise<unknown> => {
+  readFile: (options: { projectId?: string; path: string; startLine?: number; endLine?: number }): Promise<any> => {
     return ipcRenderer.invoke(IPC_CHANNELS.READ_FILE, options);
   },
 
-  searchText: (options: { query: string; path?: string; caseSensitive?: boolean; maxMatches?: number }): Promise<unknown> => {
+  searchText: (options: { projectId?: string; query: string; path?: string; caseSensitive?: boolean; maxMatches?: number }): Promise<any> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SEARCH_TEXT, options);
   },
 

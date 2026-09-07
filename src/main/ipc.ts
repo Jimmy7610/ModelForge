@@ -371,34 +371,39 @@ export function registerIpcHandlers(
       throw new Error(`Project not found with id: "${projectId}"`);
     }
 
-    const sessionId = crypto.randomUUID();
+    const runId = crypto.randomUUID();
 
     // Launch plan execution asynchronously and stream updates to renderer
     planAgent
-      .startPlanning(project, prompt, {
-        onActivity: (activity) => {
-          if (!mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(IPC_CHANNELS.AGENT_ACTIVITY, activity);
-          }
+      .startPlanning(
+        project,
+        prompt,
+        {
+          onActivity: (activity) => {
+            if (!mainWindow.isDestroyed()) {
+              mainWindow.webContents.send(IPC_CHANNELS.AGENT_ACTIVITY, activity);
+            }
+          },
+          onChunk: (chunk) => {
+            if (!mainWindow.isDestroyed()) {
+              mainWindow.webContents.send(IPC_CHANNELS.AGENT_CHUNK, chunk);
+              // Also forward to INFERENCE_CHUNK so existing Chat tab can display it seamlessly
+              mainWindow.webContents.send(IPC_CHANNELS.INFERENCE_CHUNK, chunk);
+            }
+          },
+          onStateChange: (state) => {
+            if (!mainWindow.isDestroyed()) {
+              mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATE_CHANGED, state);
+            }
+          },
         },
-        onChunk: (chunk) => {
-          if (!mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(IPC_CHANNELS.AGENT_CHUNK, chunk);
-            // Also forward to INFERENCE_CHUNK so existing Chat tab can display it seamlessly
-            mainWindow.webContents.send(IPC_CHANNELS.INFERENCE_CHUNK, chunk);
-          }
-        },
-        onStateChange: (state) => {
-          if (!mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATE_CHANGED, state);
-          }
-        },
-      })
+        runId
+      )
       .catch((err) => {
         console.error('[ModelForge PlanAgent] Error executing plan agent:', err);
       });
 
-    return { success: true, sessionId };
+    return { success: true, runId, sessionId: runId };
   });
 
   ipcMain.handle(IPC_CHANNELS.STOP_PLAN_AGENT, async () => {
@@ -415,7 +420,7 @@ export function registerIpcHandlers(
     const projects = store.getProjects();
     const project = projects.find((p) => p.id === targetId);
     if (!project) {
-      throw new Error('No active project found for inspection');
+      throw new Error(projectId ? `Project not found with id: "${projectId}"` : 'No active project found for inspection');
     }
     return new WorkspaceGuard(project.rootPath || project.path);
   };

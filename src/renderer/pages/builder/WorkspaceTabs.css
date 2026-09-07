@@ -92,7 +92,8 @@
   overflow-y: auto;
 }
 
-.tab-content-viewport.chat-viewport {
+.tab-content-viewport.chat-viewport,
+.tab-content-viewport.files-viewport {
   padding: 0;
   display: flex;
   flex-direction: column;

@@ -114,12 +114,47 @@ export class CommandPolicy {
   }
 
   /**
-   * Asserts that a script category is permitted for Agent execution in v0.6.0.
-   * Only 'test', 'build', 'lint', 'typecheck' are allowed for Agent mode.
+   * Strict Agent script-name authorization (security boundary).
+   *
+   * Returns the permitted Agent category for the given script name, or null
+   * if the name does not match any canonical allowed form.
+   *
+   * Allowed forms:
+   *   test                 build                lint                 typecheck
+   *   test:<suffix>        build:<suffix>       lint:<suffix>        typecheck:<suffix>
+   *
+   * NOTE: categorizeScript() uses fuzzy substring matching for UI display purposes
+   * only. THIS function is the sole security gate for Agent execution — it uses
+   * strict exact-match and explicit-prefix-colon matching to prevent names like
+   * "deploy:test", "dangerous-test", or "contest" from being treated as safe.
+   */
+  public static getAgentScriptCategory(
+    scriptName: string
+  ): 'test' | 'build' | 'lint' | 'typecheck' | null {
+    const lower = scriptName.toLowerCase().trim();
+    const PREFIXES: ReadonlyArray<'test' | 'build' | 'lint' | 'typecheck'> = [
+      'typecheck', // check before 'test' to prevent 'typecheck' matching 'test' prefix
+      'test',
+      'build',
+      'lint',
+    ];
+    for (const prefix of PREFIXES) {
+      if (lower === prefix || lower.startsWith(`${prefix}:`)) {
+        return prefix;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Asserts that a script name is permitted for Agent execution in v0.6.0.
+   * Uses strict getAgentScriptCategory() — NOT the fuzzy categorizeScript() heuristic.
+   * Only canonical forms (test, test:<suffix>, build, build:<suffix>,
+   * lint, lint:<suffix>, typecheck, typecheck:<suffix>) are permitted.
    */
   public static assertAllowedAgentScriptCategory(scriptName: string): void {
-    const category = this.categorizeScript(scriptName);
-    if (!AGENT_ALLOWED_SCRIPT_CATEGORIES.has(category)) {
+    const category = this.getAgentScriptCategory(scriptName);
+    if (category === null) {
       throw new CommandPolicyError(
         'This script category is not available to Agent mode in v0.6.0. The user may run eligible scripts manually from Terminal.'
       );

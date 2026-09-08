@@ -18,6 +18,10 @@ export class PersistenceStore {
     this.ensureDir();
   }
 
+  public getDataDir(): string {
+    return this.dataDir;
+  }
+
   private ensureDir(): void {
     if (!fs.existsSync(this.dataDir)) {
       try {

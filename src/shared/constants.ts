@@ -81,6 +81,7 @@ export const IPC_CHANNELS = {
   DENY_COMMAND_REQUEST: 'modelforge:deny-command-request',
   STOP_ACTIVE_PROCESS: 'modelforge:stop-active-process',
   GET_ACTIVE_PROCESS: 'modelforge:get-active-process',
+  GET_PROCESS_HISTORY: 'modelforge:get-process-history',
   RUN_PROJECT_SCRIPT: 'modelforge:run-project-script',
   PROCESS_STREAM_CHUNK: 'modelforge:process-stream-chunk',
   PROCESS_STATE_CHANGED: 'modelforge:process-state-changed',

@@ -61,12 +61,27 @@ export const CommandApprovalModal: React.FC = () => {
 
         <div className="modal-body edit-permission-body">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                Script Name:
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  Script:
+                </div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {pendingCommandRequest.scriptName}
+                </div>
               </div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                npm run {pendingCommandRequest.scriptName}
+              <div>
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  Package Manager:
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span
+                    className="badge badge-accent"
+                    style={{ textTransform: 'uppercase', fontSize: '11px', fontWeight: 600 }}
+                  >
+                    {pendingCommandRequest.packageManager || 'npm'}
+                  </span>
+                </div>
               </div>
             </div>
 

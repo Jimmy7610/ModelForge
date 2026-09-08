@@ -5,6 +5,7 @@ import {
   ProcessStatus,
   ProcessOutputChunk,
   ProcessCallbacks,
+  PackageManagerType,
 } from './types';
 import { CommandPolicy } from './command-policy';
 import { ExecutableResolver } from './executable-resolver';
@@ -16,6 +17,7 @@ export interface ProcessSessionConfig {
   runId?: string;
   projectId: string;
   commandDisplay: string;
+  packageManager?: PackageManagerType;
   executable: string;
   args: string[];
   cwd: string;
@@ -29,6 +31,7 @@ export class ProcessSession {
   public readonly runId?: string;
   public readonly projectId: string;
   public readonly commandDisplay: string;
+  public readonly packageManager?: PackageManagerType;
   public readonly executable: string;
   public readonly args: string[];
   public readonly cwd: string;
@@ -39,7 +42,11 @@ export class ProcessSession {
   private endedAt?: string;
   private durationMs?: number;
   private exitCode: number | null = null;
+  private retainedStdout: string = '';
+  private retainedStderr: string = '';
   private retainedOutput: string = '';
+  private stdoutTruncated: boolean = false;
+  private stderrTruncated: boolean = false;
   private outputTruncated: boolean = false;
   private pid?: number;
   private timeoutTimer?: NodeJS.Timeout;
@@ -56,6 +63,7 @@ export class ProcessSession {
     this.runId = config.runId;
     this.projectId = config.projectId;
     this.commandDisplay = config.commandDisplay;
+    this.packageManager = config.packageManager;
     this.executable = config.executable;
     this.args = [...config.args];
     this.cwd = config.cwd;
@@ -108,7 +116,7 @@ export class ProcessSession {
       }
 
       this.child.on('error', (err: Error) => {
-        this.appendOutput(`\n[Process Error]: ${err.message}\n`);
+        this.handleChunk('stderr', `\n[Process Error]: ${err.message}\n`);
         this.finalize(1, 'failed');
       });
 
@@ -124,7 +132,7 @@ export class ProcessSession {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.appendOutput(`\n[Spawn Failure]: ${msg}\n`);
+      this.handleChunk('stderr', `\n[Spawn Failure]: ${msg}\n`);
       this.finalize(1, 'failed');
     }
 
@@ -176,7 +184,32 @@ export class ProcessSession {
   }
 
   private handleChunk(stream: 'stdout' | 'stderr', text: string): void {
-    this.appendOutput(text);
+    if (stream === 'stdout') {
+      this.retainedStdout += text;
+      if (this.retainedStdout.length > MAX_RETAINED_OUTPUT_CHARS) {
+        this.stdoutTruncated = true;
+        this.retainedStdout =
+          '\n--- [STDOUT TRUNCATED — EXCEEDED 5 MB BUFFER] ---\n' +
+          this.retainedStdout.slice(this.retainedStdout.length - 4 * 1024 * 1024);
+      }
+    } else {
+      this.retainedStderr += text;
+      if (this.retainedStderr.length > MAX_RETAINED_OUTPUT_CHARS) {
+        this.stderrTruncated = true;
+        this.retainedStderr =
+          '\n--- [STDERR TRUNCATED — EXCEEDED 5 MB BUFFER] ---\n' +
+          this.retainedStderr.slice(this.retainedStderr.length - 4 * 1024 * 1024);
+      }
+    }
+
+    this.retainedOutput += text;
+    if (this.retainedOutput.length > MAX_RETAINED_OUTPUT_CHARS) {
+      this.outputTruncated = true;
+      // Retain the last 4 MB
+      this.retainedOutput =
+        '\n--- [OUTPUT TRUNCATED — LOG EXCEEDED 5 MB RETAINED BUFFER] ---\n' +
+        this.retainedOutput.slice(this.retainedOutput.length - 4 * 1024 * 1024);
+    }
 
     const chunk: ProcessOutputChunk = {
       sessionId: this.id,
@@ -186,18 +219,6 @@ export class ProcessSession {
     };
 
     this.callbacks?.onChunk?.(chunk);
-  }
-
-  private appendOutput(text: string): void {
-    this.retainedOutput += text;
-
-    if (this.retainedOutput.length > MAX_RETAINED_OUTPUT_CHARS) {
-      this.outputTruncated = true;
-      // Retain the last 4 MB
-      this.retainedOutput =
-        '\n--- [OUTPUT TRUNCATED — LOG EXCEEDED 5 MB RETAINED BUFFER] ---\n' +
-        this.retainedOutput.slice(this.retainedOutput.length - 4 * 1024 * 1024);
-    }
   }
 
   private finalize(exitCode: number, status: ProcessStatus): void {
@@ -230,6 +251,7 @@ export class ProcessSession {
       runId: this.runId,
       projectId: this.projectId,
       commandDisplay: this.commandDisplay,
+      packageManager: this.packageManager,
       executable: this.executable,
       args: [...this.args],
       cwd: this.cwd,
@@ -239,18 +261,47 @@ export class ProcessSession {
       endedAt: this.endedAt,
       durationMs: this.durationMs,
       exitCode: this.exitCode,
+      retainedStdout: this.retainedStdout,
+      retainedStderr: this.retainedStderr,
       retainedOutput: this.retainedOutput,
+      stdoutTruncated: this.stdoutTruncated,
+      stderrTruncated: this.stderrTruncated,
       outputTruncated: this.outputTruncated,
     };
   }
 
   public getBoundedOutputForModel(maxBytes: number = 32 * 1024): { stdout: string; stderr: string } {
-    // Model receives bounded, context-safe slice (up to 32 KB)
-    const out = this.retainedOutput;
-    if (out.length <= maxBytes) {
-      return { stdout: out, stderr: '' };
+    const stdout = this.retainedStdout;
+    const stderr = this.retainedStderr;
+
+    if (stdout.length + stderr.length <= maxBytes) {
+      return { stdout, stderr };
     }
-    const truncated = '... [truncated output] ...\n' + out.slice(out.length - maxBytes);
-    return { stdout: truncated, stderr: '' };
+
+    // Allocate budget: if stderr is non-empty, ensure it gets a fair share (up to half the budget)
+    let stderrBudget = Math.floor(maxBytes / 2);
+    let stdoutBudget = maxBytes - stderrBudget;
+
+    if (stderr.length < stderrBudget) {
+      // Stderr needs less than half, give remainder to stdout
+      stdoutBudget = maxBytes - stderr.length;
+      stderrBudget = stderr.length;
+    } else if (stdout.length < stdoutBudget) {
+      // Stdout needs less than half, give remainder to stderr
+      stderrBudget = maxBytes - stdout.length;
+      stdoutBudget = stdout.length;
+    }
+
+    const boundStream = (text: string, budget: number): string => {
+      if (text.length <= budget) return text;
+      const prefix = '... [truncated output] ...\n';
+      const sliceLength = Math.max(0, budget - prefix.length);
+      return prefix + text.slice(text.length - sliceLength);
+    };
+
+    return {
+      stdout: boundStream(stdout, stdoutBudget),
+      stderr: boundStream(stderr, stderrBudget),
+    };
   }
 }

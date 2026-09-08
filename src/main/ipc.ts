@@ -14,7 +14,7 @@ import { InferenceService } from './inference';
 import { EditAgent, PlanAgent } from './agent';
 import { DiffService, SessionAuthorizationService } from './edit';
 import { WorkspaceGuard, WorkspaceTools } from './workspace';
-import { ProcessService } from './process';
+import { ProcessService, ExecutableResolver } from './process';
 
 export function registerIpcHandlers(
   mainWindow: BrowserWindow,
@@ -29,7 +29,8 @@ export function registerIpcHandlers(
   const planAgent = existingPlanAgent || new PlanAgent(inferenceService);
   const sessionAuthorization = existingEditAuth || new SessionAuthorizationService();
   const editAuthorization = sessionAuthorization;
-  const processService = existingProcessService || new ProcessService();
+  const dataDir = typeof (store as any)?.getDataDir === 'function' ? (store as any).getDataDir() : undefined;
+  const processService = existingProcessService || new ProcessService(dataDir);
   const editAgent = existingEditAgent || new EditAgent(inferenceService, undefined, processService);
   editAgent.setProcessService(processService);
   const checkpointService = editAgent.getCheckpointService();
@@ -866,6 +867,11 @@ export function registerIpcHandlers(
     return processService.getActiveSession();
   });
 
+  ipcMain.handle(IPC_CHANNELS.GET_PROCESS_HISTORY, (_event, rawProjectId?: unknown) => {
+    const projectId = typeof rawProjectId === 'string' ? rawProjectId.trim() : undefined;
+    return processService.getProcessHistory(projectId);
+  });
+
   ipcMain.handle(IPC_CHANNELS.RUN_PROJECT_SCRIPT, async (_event, payload: unknown) => {
     if (!payload || typeof payload !== 'object') {
       throw new Error('Invalid runProjectScript payload');
@@ -880,6 +886,9 @@ export function registerIpcHandlers(
     const project = projects.find((p) => p.id === projectId);
     if (!project) throw new Error(`Project not found: ${projectId}`);
     const projectRoot = project.rootPath || project.path;
+
+    // Validate script name & invocation upfront so invalid commands reject immediately
+    ExecutableResolver.resolveScriptInvocation(projectRoot, script);
 
     const requestPromise = processService.createCommandRequest({
       projectId,

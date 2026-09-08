@@ -373,7 +373,8 @@ export type ProcessStatus =
   | 'failed'
   | 'denied'
   | 'cancelled'
-  | 'timed_out';
+  | 'timed_out'
+  | 'interrupted';
 
 export type PackageManagerType = 'npm' | 'pnpm' | 'yarn' | 'bun';
 
@@ -389,6 +390,7 @@ export interface PendingCommandRequest {
   runId?: string;
   projectId: string;
   kind: ProcessKind;
+  packageManager: PackageManagerType;
   scriptName: string;
   resolvedExecutable: string;
   resolvedArgs: string[];
@@ -406,6 +408,7 @@ export interface ProcessSessionInfo {
   runId?: string;
   projectId: string;
   commandDisplay: string;
+  packageManager?: PackageManagerType;
   executable: string;
   args: string[];
   cwd: string;
@@ -415,7 +418,11 @@ export interface ProcessSessionInfo {
   endedAt?: string;
   durationMs?: number;
   exitCode?: number | null;
+  retainedStdout: string;
+  retainedStderr: string;
   retainedOutput: string;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
   outputTruncated: boolean;
 }
 
@@ -499,6 +506,7 @@ export interface ModelForgeAPI {
   denyCommandRequest: (requestId: string, reason?: string) => Promise<{ success: boolean }>;
   stopActiveProcess: () => Promise<boolean>;
   getActiveProcess: () => Promise<ProcessSessionInfo | null>;
+  getProcessHistory: (projectId?: string) => Promise<ProcessSessionInfo[]>;
   runProjectScript: (projectId: string, script: string) => Promise<{ success: boolean; requestId?: string; error?: string }>;
   onProcessStreamChunk: (callback: (chunk: ProcessOutputChunk) => void) => () => void;
   onProcessStateChange: (callback: (session: ProcessSessionInfo) => void) => () => void;

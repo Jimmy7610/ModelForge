@@ -279,6 +279,10 @@ const api: ModelForgeAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_ACTIVE_PROCESS);
   },
 
+  getProcessHistory: (projectId?: string): Promise<ProcessSessionInfo[]> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_PROCESS_HISTORY, projectId);
+  },
+
   runProjectScript: (projectId: string, script: string): Promise<{ success: boolean; requestId?: string; error?: string }> => {
     return ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_SCRIPT, { projectId, script });
   },

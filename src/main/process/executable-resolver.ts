@@ -20,7 +20,8 @@ export class ExecutableResolver {
     const pkgJsonPath = path.join(projectDir, 'package.json');
     if (fs.existsSync(pkgJsonPath)) {
       try {
-        const content = fs.readFileSync(pkgJsonPath, 'utf8');
+        const rawContent = fs.readFileSync(pkgJsonPath, 'utf8');
+        const content = rawContent.charCodeAt(0) === 0xFEFF ? rawContent.slice(1) : rawContent;
         const pkg = JSON.parse(content);
         if (typeof pkg.packageManager === 'string' && pkg.packageManager.trim()) {
           const lower = pkg.packageManager.toLowerCase();
@@ -65,7 +66,8 @@ export class ExecutableResolver {
     }
 
     try {
-      const content = fs.readFileSync(pkgJsonPath, 'utf8');
+      const rawContent = fs.readFileSync(pkgJsonPath, 'utf8');
+      const content = rawContent.charCodeAt(0) === 0xFEFF ? rawContent.slice(1) : rawContent;
       const pkg = JSON.parse(content);
       if (!pkg.scripts || typeof pkg.scripts !== 'object') {
         return { packageManager: pm, scripts: [] };

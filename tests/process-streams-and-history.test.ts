@@ -49,6 +49,7 @@ describe('Stream Separation & Local Process History (Pass 6 Correction)', () => 
       projectRoot: tempProjectDir,
       scriptName: 'stdoutOnly',
       reason: 'Testing stdout only',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -70,6 +71,7 @@ describe('Stream Separation & Local Process History (Pass 6 Correction)', () => 
       projectRoot: tempProjectDir,
       scriptName: 'stderrOnly',
       reason: 'Testing stderr only',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -92,6 +94,7 @@ describe('Stream Separation & Local Process History (Pass 6 Correction)', () => 
       projectRoot: tempProjectDir,
       scriptName: 'mixed',
       reason: 'Testing mixed streams',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -214,6 +217,7 @@ describe('Stream Separation & Local Process History (Pass 6 Correction)', () => 
       projectRoot: tempProjectDir,
       scriptName: 'stdoutOnly',
       reason: 'Testing history persistence',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -238,6 +242,7 @@ describe('Stream Separation & Local Process History (Pass 6 Correction)', () => 
       projectRoot: tempProjectDir,
       scriptName: 'stdoutOnly',
       reason: 'Run before restart',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();

@@ -12,7 +12,12 @@ import { EditAgentCallbacks } from './types';
 import { CheckpointService } from '../edit/checkpoint-service';
 import { EditSession } from '../edit/edit-session';
 import { DEFAULT_MUTATION_LIMITS } from '../edit/types';
-import { ProcessService } from '../process/process-service';
+import {
+  ProcessService,
+  CommandPolicy,
+  AGENT_ALLOWED_SCRIPT_CATEGORIES,
+  ExecutableResolver,
+} from '../process';
 
 export class EditAgent {
   private inferenceService: InferenceService;
@@ -724,6 +729,20 @@ export class EditAgent {
                       });
                     }
 
+                    const category = CommandPolicy.categorizeScript(scriptName);
+                    if (!AGENT_ALLOWED_SCRIPT_CATEGORIES.has(category)) {
+                      blockedToolCalls++;
+                      const blockedMsg = 'This script category is not available to Agent mode in v0.6.0. The user may run eligible scripts manually from Terminal.';
+                      act.blocked(blockedMsg, `✗ Script "${scriptName}" (${category}) blocked for Agent`);
+                      return JSON.stringify({
+                        blocked: true,
+                        error: blockedMsg,
+                      });
+                    }
+
+                    const detectedPm = ExecutableResolver.detectPackageManager(projectPath);
+                    const pmDisplay = detectedPm || 'npm';
+
                     try {
                       if (this.abortController?.signal.aborted) throw new Error('Edit cancelled');
 
@@ -745,21 +764,32 @@ export class EditAgent {
                         }
                       }
 
-                      act.done('Awaiting user approval...', `⏳ Requested npm run ${scriptName}`);
+                      act.done('Awaiting user approval...', `⏳ Requested ${pmDisplay} run ${scriptName}`);
 
-                      const execRes = await this.processService!.createCommandRequest({
-                        projectId: project.id,
-                        projectRoot: projectPath,
-                        kind: 'package_script',
-                        scriptName,
-                        reason,
-                        runId: currentRunId,
-                      });
+                      let execRes;
+                      try {
+                        execRes = await this.processService!.createCommandRequest({
+                          projectId: project.id,
+                          projectRoot: projectPath,
+                          kind: 'package_script',
+                          scriptName,
+                          reason,
+                          initiator: 'agent',
+                          runId: currentRunId,
+                        });
+                      } catch (policyErr: any) {
+                        blockedToolCalls++;
+                        act.blocked(policyErr.message, `✗ Command blocked by security policy`);
+                        return JSON.stringify({
+                          blocked: true,
+                          error: policyErr.message,
+                        });
+                      }
 
                       if (execRes.denied) {
                         blockedToolCalls++;
                         const denyAct = recordActivity(`Command denied: ${scriptName}`, 'request_project_script');
-                        denyAct.blocked('User denied approval for this command.', `✗ Command denied: ${scriptName}`);
+                        denyAct.blocked('User denied approval for this command.', `✗ Command denied: ${pmDisplay} run ${scriptName}`);
                         return JSON.stringify({
                           denied: true,
                           message: 'User denied this command. Do not repeat the same request. Continue with your analysis or code edits.',
@@ -769,7 +799,7 @@ export class EditAgent {
                       if (execRes.cancelled) {
                         blockedToolCalls++;
                         const cancelAct = recordActivity(`Command cancelled: ${scriptName}`, 'request_project_script');
-                        cancelAct.blocked('Command cancelled.', `✗ Command cancelled: ${scriptName}`);
+                        cancelAct.blocked('Command cancelled.', `✗ Command cancelled: ${pmDisplay} run ${scriptName}`);
                         return JSON.stringify({
                           cancelled: true,
                           message: 'Command execution was cancelled.',
@@ -795,14 +825,15 @@ export class EditAgent {
                       successfulToolCalls++;
                       commandsExecuted++;
 
+                      const finalPm = pmDisplay;
                       if (execRes.success) {
                         commandsPassed++;
                         const passAct = recordActivity(`Command passed: ${scriptName} (exit 0)`, 'request_project_script');
-                        passAct.done(`Exit 0 (${execRes.durationMs}ms)`, `✓ npm run ${scriptName} exited 0`);
+                        passAct.done(`Exit 0 (${execRes.durationMs}ms)`, `✓ ${finalPm} run ${scriptName} exited 0`);
                       } else {
                         commandsFailed++;
                         const failAct = recordActivity(`Command failed: ${scriptName} (exit ${execRes.exitCode})`, 'request_project_script');
-                        failAct.done(`Exit ${execRes.exitCode} (${execRes.durationMs}ms)`, `✗ npm run ${scriptName} exited ${execRes.exitCode}`);
+                        failAct.done(`Exit ${execRes.exitCode} (${execRes.durationMs}ms)`, `✗ ${finalPm} run ${scriptName} exited ${execRes.exitCode}`);
                       }
 
                       return JSON.stringify({

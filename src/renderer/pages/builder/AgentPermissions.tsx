@@ -103,7 +103,7 @@ export const AgentPermissions: React.FC = () => {
                 </div>
                 <div className="rule-item">
                   <CheckCircle2 size={13} className="rule-icon success" />
-                  <span>Supervised npm script execution</span>
+                  <span>Supervised project script execution</span>
                 </div>
                 <div className="rule-item">
                   <CheckCircle2 size={13} className="rule-icon success" />

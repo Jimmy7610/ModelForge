@@ -16,6 +16,38 @@ const FORBIDDEN_COMMAND_PATTERNS = [
 ];
 
 /**
+ * Script categories permitted for Agent mode in v0.6.0.
+ * Human manual Terminal may additionally execute 'dev', 'start', 'serve', 'preview', etc.
+ */
+export const AGENT_ALLOWED_SCRIPT_CATEGORIES = new Set<DiscoveredScriptInfo['category']>([
+  'test',
+  'build',
+  'lint',
+  'typecheck',
+]);
+
+/**
+ * Stricter forbidden command patterns enforced specifically when initiated by the Agent (Fix 4).
+ * Prevents model from using process wrappers, downloaders, package runners, or inline code evaluators.
+ */
+const AGENT_FORBIDDEN_COMMAND_PATTERNS = [
+  // Shells and execution environments
+  /\b(powershell|powershell\.exe|cmd|cmd\.exe|bash|sh|zsh|wsl)\b/i,
+  // Remote access & network fetching
+  /\b(ssh|curl|wget|Invoke-WebRequest|Invoke-RestMethod)\b/i,
+  // Package runners
+  /\b(npx|bunx)\b/i,
+  /\b(npm\s+exec|pnpm\s+dlx|yarn\s+dlx)\b/i,
+  // Inline code execution flags
+  /\bnode(\.exe)?\s+(-e|--eval)\b/i,
+  /\b(python|python3|py)(\.exe)?\s+-c\b/i,
+  // Package mutations
+  /\b(npm|pnpm|yarn|bun)\s+(install|i|add|update|upgrade)\b/i,
+  // Git mutations
+  /\bgit\s+(commit|checkout|reset|push|merge|rebase|tag|branch\s+-[dD])\b/i,
+];
+
+/**
  * Secret environment variable patterns that must be filtered from child processes.
  */
 const SECRET_ENV_PATTERN = /(TOKEN|SECRET|API_KEY|PASSWORD|PRIVATE_KEY|AUTH)/i;
@@ -77,6 +109,40 @@ export class CommandPolicy {
     for (const pattern of FORBIDDEN_COMMAND_PATTERNS) {
       if (pattern.test(command)) {
         throw new CommandPolicyError(`Command violates Model Forge security policy: "${command}"`);
+      }
+    }
+  }
+
+  /**
+   * Asserts that a script category is permitted for Agent execution in v0.6.0.
+   * Only 'test', 'build', 'lint', 'typecheck' are allowed for Agent mode.
+   */
+  public static assertAllowedAgentScriptCategory(scriptName: string): void {
+    const category = this.categorizeScript(scriptName);
+    if (!AGENT_ALLOWED_SCRIPT_CATEGORIES.has(category)) {
+      throw new CommandPolicyError(
+        'This script category is not available to Agent mode in v0.6.0. The user may run eligible scripts manually from Terminal.'
+      );
+    }
+  }
+
+  /**
+   * Asserts that a script command does not violate Agent-specific restrictions (Fix 4).
+   * Blocks shells, downloaders, package runners (npx/bunx), and inline code eval flags.
+   */
+  public static assertSafeAgentScriptCommand(command: string): void {
+    if (typeof command !== 'string' || !command.trim()) {
+      throw new CommandPolicyError('Script command must be a non-empty string');
+    }
+    // Must satisfy global policies first
+    this.assertSafeScriptCommand(command);
+
+    // Then satisfy agent-specific policies
+    for (const pattern of AGENT_FORBIDDEN_COMMAND_PATTERNS) {
+      if (pattern.test(command)) {
+        throw new CommandPolicyError(
+          `Command violates Model Forge Agent security policy: "${command}"`
+        );
       }
     }
   }

@@ -32,7 +32,7 @@ export const HistoryPage: React.FC = () => {
       <div className="page-header-row">
         <div>
           <h1 className="page-title">History</h1>
-          <p className="page-subtitle">Past process runs, agent activities, and checkpoints</p>
+          <p className="page-subtitle">Past supervised process execution runs and command logs</p>
         </div>
       </div>
 
@@ -126,13 +126,12 @@ export const HistoryPage: React.FC = () => {
             <div className="history-empty-icon-wrap">
               <HistoryIcon size={36} className="text-secondary" strokeWidth={1.5} />
             </div>
-            <h3 className="empty-title">No sessions yet</h3>
+            <h3 className="empty-title">No process runs yet</h3>
             <p className="empty-desc">
-              When you run tasks in the Builder or Terminal, full chronological logs of script executions,
-              source code diffs, and test assertions are securely archived locally.
+              Completed supervised process runs are stored locally with command, status, exit code, duration, and bounded output.
             </p>
             <div className="history-meta-hint text-muted text-xs">
-              Sessions are indexed locally under userData with zero cloud telemetry.
+              Execution history is stored locally under userData with zero cloud telemetry.
             </div>
           </div>
         </div>

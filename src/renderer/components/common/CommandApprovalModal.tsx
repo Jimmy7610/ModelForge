@@ -79,7 +79,7 @@ export const CommandApprovalModal: React.FC = () => {
                     className="badge badge-accent"
                     style={{ textTransform: 'uppercase', fontSize: '11px', fontWeight: 600 }}
                   >
-                    {pendingCommandRequest.packageManager || 'npm'}
+                    {pendingCommandRequest.packageManager || 'Unknown'}
                   </span>
                 </div>
               </div>

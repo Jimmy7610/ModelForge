@@ -215,8 +215,13 @@ export class ProcessService {
       throw new ProcessExecutionError('Another command request is already pending approval.');
     }
 
-    // 2. Resolve invocation immutably
-    const invocation = ExecutableResolver.resolveScriptInvocation(options.projectRoot, options.scriptName);
+    // 2. Resolve invocation immutably with initiator-specific policy
+    const initiator = options.initiator || 'agent';
+    const invocation = ExecutableResolver.resolveScriptInvocation(options.projectRoot, options.scriptName, initiator);
+
+    if (!invocation.packageManager) {
+      throw new ProcessExecutionError('Unable to determine package manager for project');
+    }
 
     const isPersistent = CommandPolicy.isPersistentScript(options.scriptName);
     const riskSummary = isPersistent
@@ -236,7 +241,7 @@ export class ProcessService {
       resolvedArgs: [...invocation.args],
       cwd: invocation.cwd,
       reason: options.reason,
-      initiator: options.initiator || 'agent',
+      initiator,
       timestamp: new Date().toISOString(),
       riskSummary,
       status: 'pending',
@@ -342,6 +347,7 @@ export class ProcessService {
           success: sessionInfo.exitCode === 0,
           status: sessionInfo.status,
           script: request.scriptName,
+          packageManager: request.packageManager,
           exitCode: sessionInfo.exitCode,
           startedAt: sessionInfo.startedAt,
           endedAt: sessionInfo.endedAt,

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -11,16 +11,23 @@ describe('Process Execution & Streaming (Tests 38-48)', () => {
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-exec-test-'));
+    // Write real fixture scripts â€” node -e is blocked by agent content policy (Fix 4)
+    fs.writeFileSync(path.join(tempDir, 'success.js'), 'console.log(12345);\n');
+    fs.writeFileSync(path.join(tempDir, 'failure.js'), 'console.error(54321); process.exit(1);\n');
+    fs.writeFileSync(path.join(tempDir, 'multiline.js'), 'console.log(1); console.log(2); console.log(3);\n');
+    fs.writeFileSync(path.join(tempDir, 'stderr-stream.js'), 'console.error(999);\n');
+    fs.writeFileSync(path.join(tempDir, 'long-running.js'), 'setInterval(() => {}, 1000);\n');
+    fs.writeFileSync(path.join(tempDir, 'fast-echo.js'), Array.from({ length: 100 }, (_, i) => `console.log(${i});`).join('\n') + '\n');
     fs.writeFileSync(
       path.join(tempDir, 'package.json'),
       JSON.stringify({
         scripts: {
-          success: 'node -e "console.log(12345)"',
-          failure: 'node -e "console.error(54321); process.exit(1)"',
-          multiline: 'node -e "console.log(1); console.log(2); console.log(3)"',
-          stderrStream: 'node -e "console.error(999)"',
-          longRunning: 'node -e "setInterval(() => {}, 1000)"',
-          fastEcho: 'node -e "for(let i=0; i<100; i++) console.log(i)"',
+          success: 'node success.js',
+          failure: 'node failure.js',
+          multiline: 'node multiline.js',
+          stderrStream: 'node stderr-stream.js',
+          longRunning: 'node long-running.js',
+          fastEcho: 'node fast-echo.js',
         },
       })
     );
@@ -46,6 +53,7 @@ describe('Process Execution & Streaming (Tests 38-48)', () => {
       projectRoot: tempDir,
       scriptName: 'success',
       reason: 'Testing stdout chunks',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -70,6 +78,7 @@ describe('Process Execution & Streaming (Tests 38-48)', () => {
       projectRoot: tempDir,
       scriptName: 'stderrStream',
       reason: 'Testing stderr chunks',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -87,6 +96,7 @@ describe('Process Execution & Streaming (Tests 38-48)', () => {
       projectRoot: tempDir,
       scriptName: 'success',
       reason: 'Testing completed status',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -105,6 +115,7 @@ describe('Process Execution & Streaming (Tests 38-48)', () => {
       projectRoot: tempDir,
       scriptName: 'failure',
       reason: 'Testing failed status',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -124,6 +135,7 @@ describe('Process Execution & Streaming (Tests 38-48)', () => {
       projectRoot: tempDir,
       scriptName: 'success',
       reason: 'Testing duration',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -143,6 +155,7 @@ describe('Process Execution & Streaming (Tests 38-48)', () => {
       projectRoot: tempDir,
       scriptName: 'longRunning',
       reason: 'Testing PID',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -164,6 +177,7 @@ describe('Process Execution & Streaming (Tests 38-48)', () => {
       projectRoot: tempDir,
       scriptName: 'longRunning',
       reason: 'Testing stop',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -186,6 +200,7 @@ describe('Process Execution & Streaming (Tests 38-48)', () => {
       projectRoot: tempDir,
       scriptName: 'multiline',
       reason: 'Testing multiline aggregation',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -204,6 +219,7 @@ describe('Process Execution & Streaming (Tests 38-48)', () => {
       projectRoot: tempDir,
       scriptName: 'success',
       reason: 'Testing last session retention',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();

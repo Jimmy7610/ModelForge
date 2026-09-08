@@ -11,10 +11,14 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-appr-test-'));
+    // Write real fixture scripts â€” node -e is blocked by agent content policy (Fix 4)
+    fs.writeFileSync(path.join(tempDir, 'fixture-test.js'), 'console.log(123);\n');
+    fs.writeFileSync(path.join(tempDir, 'fixture-build.js'), 'console.log(456);\n');
     fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify({
       scripts: {
-        test: 'node -e "console.log(123)"',
-        build: 'node -e "console.log(456)"',
+        test: 'node fixture-test.js',
+        build: 'node fixture-build.js',
+        dev: 'node fixture-test.js',
       }
     }));
     processService = new ProcessService();
@@ -34,6 +38,7 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
       projectRoot: tempDir,
       scriptName: 'test',
       reason: 'Run unit tests',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -56,6 +61,7 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
       projectRoot: tempDir,
       scriptName: 'test',
       reason: 'Testing approval',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -77,6 +83,7 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
       projectRoot: tempDir,
       scriptName: 'test',
       reason: 'Testing denial',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -96,6 +103,7 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
       projectRoot: tempDir,
       scriptName: 'build',
       reason: 'Testing custom denial reason',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -113,6 +121,7 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
       projectRoot: tempDir,
       scriptName: 'test',
       reason: 'First request',
+      initiator: 'manual',
     });
 
     await expect(
@@ -121,6 +130,7 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
         projectRoot: tempDir,
         scriptName: 'build',
         reason: 'Second request',
+      initiator: 'manual',
       })
     ).rejects.toThrow(ProcessExecutionError);
 
@@ -132,11 +142,12 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
 
   // Test 34: Single running process constraint
   it('34. rejects new command request while a process is actively running', async () => {
-    // Add a long-running script to package.json
+    // Add a long-running script to package.json (using real .js files, not node -e)
+    fs.writeFileSync(path.join(tempDir, 'sleep-fixture.js'), 'setTimeout(() => {}, 5000);\n');
     fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify({
       scripts: {
-        sleep: 'node -e "setTimeout(() => {}, 5000)"',
-        test: 'node -e "console.log(\"hi\")"',
+        sleep: 'node sleep-fixture.js',
+        test: 'node fixture-test.js',
       }
     }));
 
@@ -145,6 +156,7 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
       projectRoot: tempDir,
       scriptName: 'sleep',
       reason: 'Long-running script',
+      initiator: 'manual',
     });
 
     const pending = processService.getPendingRequest();
@@ -160,6 +172,7 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
         projectRoot: tempDir,
         scriptName: 'test',
         reason: 'Concurrent request',
+      initiator: 'manual',
       })
     ).rejects.toThrow(ProcessExecutionError);
 
@@ -175,6 +188,7 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
       projectRoot: tempDir,
       scriptName: 'test',
       reason: 'Pending switch test',
+      initiator: 'manual',
     });
 
     expect(processService.getPendingRequest()).not.toBeNull();
@@ -201,6 +215,7 @@ describe('Process Approval & Queue Security (Tests 29-37)', () => {
         projectRoot: tempDir,
         scriptName: 'test',
         reason: 'Timeout test',
+      initiator: 'manual',
       });
 
       expect(processService.getPendingRequest()).not.toBeNull();

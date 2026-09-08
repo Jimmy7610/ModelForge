@@ -113,7 +113,8 @@ export class ExecutableResolver {
    */
   public static resolveScriptInvocation(
     projectDir: string,
-    rawScriptName: string
+    rawScriptName: string,
+    initiator: 'agent' | 'manual' = 'manual'
   ): ResolvedScriptInvocation {
     const scriptName = CommandPolicy.validateScriptName(rawScriptName);
     const canonicalCwd = path.resolve(projectDir);
@@ -127,8 +128,14 @@ export class ExecutableResolver {
       );
     }
 
-    // Enforce safety policy against dependency install, Git mutation, or raw shell patterns
+    // Enforce global safety policy against dependency install, Git mutation, or raw shell patterns
     CommandPolicy.assertSafeScriptCommand(targetScript.command);
+
+    // Enforce stricter category and command content restrictions when initiated by Agent
+    if (initiator === 'agent') {
+      CommandPolicy.assertAllowedAgentScriptCategory(scriptName);
+      CommandPolicy.assertSafeAgentScriptCommand(targetScript.command);
+    }
 
     const executable = this.resolveExecutableName(packageManager);
     const args = ['run', scriptName];

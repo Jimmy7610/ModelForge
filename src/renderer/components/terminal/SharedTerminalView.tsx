@@ -91,7 +91,7 @@ export const SharedTerminalView: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Package size={14} className="text-accent" />
             <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-primary)' }}>
-              {packageManager || 'npm'}
+              {packageManager || 'Unknown'}
             </span>
           </div>
 

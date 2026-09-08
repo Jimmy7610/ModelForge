@@ -888,7 +888,7 @@ export function registerIpcHandlers(
     const projectRoot = project.rootPath || project.path;
 
     // Validate script name & invocation upfront so invalid commands reject immediately
-    ExecutableResolver.resolveScriptInvocation(projectRoot, script);
+    ExecutableResolver.resolveScriptInvocation(projectRoot, script, 'manual');
 
     const requestPromise = processService.createCommandRequest({
       projectId,

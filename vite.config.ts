@@ -11,8 +11,7 @@ export default defineConfig({
       {
         entry: 'src/main/index.ts',
         onstart(options) {
-          const argv = process.env.ELECTRON_ARGS ? ['.', ...process.env.ELECTRON_ARGS.split(' ')] : undefined;
-          options.startup(argv);
+          options.startup();
         },
         vite: {
           build: {

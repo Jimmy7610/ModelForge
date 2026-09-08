@@ -13,13 +13,17 @@ describe('Agent Process Tool Registration & Supervision (Tests 66-75)', () => {
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mf-agent-tool-test-'));
+    // Write real fixture scripts — node -e is blocked by agent content policy (Fix 4)
+    fs.writeFileSync(path.join(tempDir, 'fixture-test.js'), 'console.log(123);\n');
+    fs.writeFileSync(path.join(tempDir, 'fixture-build.js'), 'console.log(456);\n');
+    fs.writeFileSync(path.join(tempDir, 'fixture-fail.js'), 'process.exit(1);\n');
     fs.writeFileSync(
       path.join(tempDir, 'package.json'),
       JSON.stringify({
         scripts: {
-          test: 'node -e "console.log(123)"',
-          build: 'node -e "console.log(456)"',
-          fail: 'node -e "process.exit(1)"',
+          test: 'node fixture-test.js',
+          build: 'node fixture-build.js',
+          'test:fail': 'node fixture-fail.js',
         },
       })
     );
@@ -134,7 +138,7 @@ describe('Agent Process Tool Registration & Supervision (Tests 66-75)', () => {
     const promise = processService.createCommandRequest({
       projectId: 'p1',
       projectRoot: tempDir,
-      scriptName: 'fail',
+      scriptName: 'test:fail',
       reason: 'Expected failure',
       initiator: 'agent',
     });

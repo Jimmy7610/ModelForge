@@ -1075,7 +1075,7 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         return;
       }
 
-      if (permissionLevel !== 'EDIT') {
+      if (permissionLevel !== 'EDIT' && permissionLevel !== 'AGENT') {
         setEditPermissionModalOpen(true);
         return;
       }
@@ -1140,7 +1140,7 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
       }
     },
-    [activeProjectId, projects, activeModel, permissionLevel, addToast, setActiveTab]
+    [activeProjectId, projects, activeModel, permissionLevel, pendingCheckpoint, addToast, setActiveTab]
   );
 
   const handleStopEditAgent = useCallback(async (): Promise<boolean> => {

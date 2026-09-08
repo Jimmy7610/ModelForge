@@ -50,7 +50,7 @@ export const PromptComposer: React.FC = () => {
       return;
     }
 
-    if (permissionLevel !== 'EDIT') {
+    if (permissionLevel !== 'EDIT' && permissionLevel !== 'AGENT') {
       setEditPermissionModalOpen(true);
       return;
     }

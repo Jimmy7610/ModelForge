@@ -18,6 +18,13 @@ import {
   CheckpointSummary,
   CheckpointDiffResult,
   RollbackResult,
+  SessionAuthorizationState,
+  DiscoveredScriptInfo,
+  PendingCommandRequest,
+  ProcessSessionInfo,
+  ProcessOutputChunk,
+  PackageManagerType,
+  PermissionLevel,
 } from '../shared/types';
 import { APP_VERSION, IPC_CHANNELS } from '../shared/constants';
 
@@ -233,6 +240,77 @@ const api: ModelForgeAPI = {
 
   getEditAuthorizationState: (): Promise<{ authorized: boolean; authorizedProjectId: string | null }> => {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_EDIT_AUTHORIZATION_STATE);
+  },
+
+  // Pass 6: Process Execution & Agent Mode
+  enableAgentForProject: (projectId: string): Promise<{ authorized: boolean; authorizedProjectId: string | null; permissionLevel: PermissionLevel }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.ENABLE_AGENT_FOR_PROJECT, projectId);
+  },
+
+  disableAgent: (): Promise<void> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.DISABLE_AGENT);
+  },
+
+  getSessionAuthorizationState: (): Promise<SessionAuthorizationState> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_SESSION_AUTHORIZATION_STATE);
+  },
+
+  getProjectScripts: (projectId: string): Promise<{ packageManager: PackageManagerType; scripts: DiscoveredScriptInfo[] }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_PROJECT_SCRIPTS, projectId);
+  },
+
+  getPendingCommandRequest: (): Promise<PendingCommandRequest | null> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_PENDING_COMMAND_REQUEST);
+  },
+
+  approveCommandRequest: (requestId: string): Promise<{ success: boolean; sessionId?: string; error?: string }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.APPROVE_COMMAND_REQUEST, requestId);
+  },
+
+  denyCommandRequest: (requestId: string, reason?: string): Promise<{ success: boolean }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.DENY_COMMAND_REQUEST, { requestId, reason });
+  },
+
+  stopActiveProcess: (): Promise<boolean> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.STOP_ACTIVE_PROCESS);
+  },
+
+  getActiveProcess: (): Promise<ProcessSessionInfo | null> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.GET_ACTIVE_PROCESS);
+  },
+
+  runProjectScript: (projectId: string, script: string): Promise<{ success: boolean; requestId?: string; error?: string }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.RUN_PROJECT_SCRIPT, { projectId, script });
+  },
+
+  onProcessStreamChunk: (callback: (chunk: ProcessOutputChunk) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, chunk: ProcessOutputChunk) => {
+      callback(chunk);
+    };
+    ipcRenderer.on(IPC_CHANNELS.PROCESS_STREAM_CHUNK, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.PROCESS_STREAM_CHUNK, handler);
+    };
+  },
+
+  onProcessStateChange: (callback: (info: ProcessSessionInfo) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: ProcessSessionInfo) => {
+      callback(info);
+    };
+    ipcRenderer.on(IPC_CHANNELS.PROCESS_STATE_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.PROCESS_STATE_CHANGED, handler);
+    };
+  },
+
+  onCommandRequestCreated: (callback: (request: PendingCommandRequest) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, request: PendingCommandRequest) => {
+      callback(request);
+    };
+    ipcRenderer.on(IPC_CHANNELS.COMMAND_REQUEST_CREATED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.COMMAND_REQUEST_CREATED, handler);
+    };
   },
 
   onEditAgentActivity: (callback: (activity: AgentActivityItem) => void) => {

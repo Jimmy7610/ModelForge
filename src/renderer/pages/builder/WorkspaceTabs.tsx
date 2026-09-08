@@ -16,6 +16,7 @@ import './WorkspaceTabs.css';
 import { ChatTab } from './ChatTab';
 import { FilesTab } from './files/FilesTab';
 import { DiffTab } from './diff/DiffTab';
+import { SharedTerminalView } from '@/components/terminal/SharedTerminalView';
 
 export const WorkspaceTabs: React.FC = () => {
   const { activeTab, setActiveTab, activeProject } = useAppStore();
@@ -68,15 +69,7 @@ export const WorkspaceTabs: React.FC = () => {
         {activeTab === 'files' && <FilesTab />}
 
         {/* TAB: TERMINAL */}
-        {activeTab === 'terminal' && (
-          <div className="tab-empty-state">
-            <TerminalIcon size={28} className="text-muted" />
-            <div className="tab-empty-title">Terminal integration will activate for trusted projects</div>
-            <div className="tab-empty-sub">
-              Terminal sessions run locally inside your project root with sandboxed execution.
-            </div>
-          </div>
-        )}
+        {activeTab === 'terminal' && <SharedTerminalView />}
 
         {/* TAB: DIFF */}
         {activeTab === 'diff' && <DiffTab />}

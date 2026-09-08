@@ -27,6 +27,10 @@ import {
   EditAgentState,
   PermissionLevel,
   RollbackResult,
+  DiscoveredScriptInfo,
+  PackageManagerType,
+  PendingCommandRequest,
+  ProcessSessionInfo,
 } from '@shared/types';
 
 import { DEFAULT_SETTINGS } from '@shared/constants';
@@ -50,12 +54,27 @@ interface AppStoreContextType {
   addProject: () => Promise<Project | null>;
   removeProject: (id: string) => Promise<void>;
 
-  // Permission Model (Pass 5)
+  // Permission Model (Pass 5 & Pass 6)
   permissionLevel: PermissionLevel;
   setPermissionLevel: (level: PermissionLevel) => void;
   isEditPermissionModalOpen: boolean;
   setEditPermissionModalOpen: (open: boolean) => void;
   confirmEnableEdit: () => void;
+  isAgentPermissionModalOpen: boolean;
+  setAgentPermissionModalOpen: (open: boolean) => void;
+  confirmEnableAgent: () => Promise<void>;
+  disableAgent: () => Promise<void>;
+
+  // Process Execution & Terminal State (Pass 6)
+  activeProcessSession: ProcessSessionInfo | null;
+  pendingCommandRequest: PendingCommandRequest | null;
+  discoveredScripts: DiscoveredScriptInfo[];
+  packageManager: PackageManagerType | null;
+  fetchProjectScripts: () => Promise<void>;
+  approveCommandRequest: (requestId: string) => Promise<void>;
+  denyCommandRequest: (requestId: string, reason?: string) => Promise<void>;
+  stopActiveProcess: () => Promise<boolean>;
+  runManualScript: (script: string) => Promise<void>;
 
   // Models & Libraries
   models: ModelRecord[];
@@ -150,15 +169,22 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   const activeRunIdRef = useRef<string | null>(null);
   activeRunIdRef.current = activeRunId;
 
-  // Permission & Edit Agent (Pass 5)
+  // Permission & Edit Agent (Pass 5 & Pass 6)
   const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>('READ');
   const [isEditPermissionModalOpen, setEditPermissionModalOpen] = useState(false);
+  const [isAgentPermissionModalOpen, setAgentPermissionModalOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editAgentState, setEditAgentState] = useState<EditAgentState | null>(null);
   const [pendingCheckpoint, setPendingCheckpoint] = useState<CheckpointSummary | null>(null);
   const [checkpointDiff, setCheckpointDiff] = useState<CheckpointDiffResult | null>(null);
   const [isRecoveryBannerDismissed, setIsRecoveryBannerDismissed] = useState(false);
   const [fileTreeRefreshCounter, setFileTreeRefreshCounter] = useState(0);
+
+  // Process & Terminal (Pass 6)
+  const [activeProcessSession, setActiveProcessSession] = useState<ProcessSessionInfo | null>(null);
+  const [pendingCommandRequest, setPendingCommandRequest] = useState<PendingCommandRequest | null>(null);
+  const [discoveredScripts, setDiscoveredScripts] = useState<DiscoveredScriptInfo[]>([]);
+  const [packageManager, setPackageManager] = useState<PackageManagerType | null>(null);
 
   const checkpointRefreshSeqRef = useRef<number>(0);
   const pendingCheckpointRef = useRef<CheckpointSummary | null>(null);
@@ -385,6 +411,48 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         });
       }
 
+      let unsubscribeProcessChunk: (() => void) | undefined;
+      if (window.modelForge.onProcessStreamChunk) {
+        unsubscribeProcessChunk = window.modelForge.onProcessStreamChunk((chunk) => {
+          setActiveProcessSession((prev) => {
+            if (!prev || prev.id !== chunk.sessionId) return prev;
+            return {
+              ...prev,
+              retainedOutput: prev.retainedOutput + chunk.text,
+            };
+          });
+        });
+      }
+
+      let unsubscribeProcessState: (() => void) | undefined;
+      if (window.modelForge.onProcessStateChange) {
+        unsubscribeProcessState = window.modelForge.onProcessStateChange((session) => {
+          setActiveProcessSession(session);
+          if (session.status !== 'running') {
+            setFileTreeRefreshCounter((c) => c + 1);
+            refreshPendingCheckpointAndDiffRef.current?.();
+          }
+        });
+      }
+
+      let unsubscribeCommandRequest: (() => void) | undefined;
+      if (window.modelForge.onCommandRequestCreated) {
+        unsubscribeCommandRequest = window.modelForge.onCommandRequestCreated((req) => {
+          setPendingCommandRequest(req);
+        });
+      }
+
+      if (window.modelForge.getActiveProcess) {
+        window.modelForge.getActiveProcess().then((p) => {
+          if (p) setActiveProcessSession(p);
+        }).catch(console.error);
+      }
+      if (window.modelForge.getPendingCommandRequest) {
+        window.modelForge.getPendingCommandRequest().then((r) => {
+          if (r) setPendingCommandRequest(r);
+        }).catch(console.error);
+      }
+
       return () => {
         unsubscribeState();
         unsubscribeInferenceState();
@@ -395,6 +463,9 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         if (unsubscribeEditActivity) unsubscribeEditActivity();
         if (unsubscribeEditChunk) unsubscribeEditChunk();
         if (unsubscribeEditState) unsubscribeEditState();
+        if (unsubscribeProcessChunk) unsubscribeProcessChunk();
+        if (unsubscribeProcessState) unsubscribeProcessState();
+        if (unsubscribeCommandRequest) unsubscribeCommandRequest();
       };
 
     }
@@ -654,13 +725,39 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
     setActiveProjectId(id);
     setPermissionLevel('READ');
     setIsRecoveryBannerDismissed(false);
+    setActiveProcessSession(null);
+    setPendingCommandRequest(null);
+    setDiscoveredScripts([]);
+    setPackageManager(null);
     if (typeof window !== 'undefined' && window.modelForge?.setActiveProject) {
       window.modelForge.setActiveProject(id).catch(console.error);
     }
     if (typeof window !== 'undefined' && window.modelForge?.disableEdit) {
       window.modelForge.disableEdit().catch(console.error);
     }
+    if (typeof window !== 'undefined' && window.modelForge?.disableAgent) {
+      window.modelForge.disableAgent().catch(console.error);
+    }
   }, []);
+
+  const fetchProjectScripts = useCallback(async () => {
+    if (!activeProjectId || typeof window === 'undefined' || !window.modelForge?.getProjectScripts) {
+      setDiscoveredScripts([]);
+      setPackageManager(null);
+      return;
+    }
+    try {
+      const res = await window.modelForge.getProjectScripts(activeProjectId);
+      if (res) {
+        setDiscoveredScripts(res.scripts || []);
+        setPackageManager(res.packageManager || null);
+      }
+    } catch (err) {
+      console.error('[AppStore] Failed to fetch project scripts:', err);
+      setDiscoveredScripts([]);
+      setPackageManager(null);
+    }
+  }, [activeProjectId]);
 
   const refreshPendingCheckpointAndDiff = useCallback(async () => {
     const seq = ++checkpointRefreshSeqRef.current;
@@ -713,12 +810,13 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   useEffect(() => {
     refreshPendingCheckpointAndDiff();
-    if (typeof window !== 'undefined' && window.modelForge?.getEditAuthorizationState) {
+    fetchProjectScripts();
+    if (typeof window !== 'undefined' && window.modelForge?.getSessionAuthorizationState) {
       window.modelForge
-        .getEditAuthorizationState()
+        .getSessionAuthorizationState()
         .then((res) => {
-          if (res?.authorized && res?.authorizedProjectId === activeProjectId) {
-            setPermissionLevel('EDIT');
+          if (res?.authorizedProjectId === activeProjectId) {
+            setPermissionLevel(res.permissionLevel);
           } else {
             setPermissionLevel('READ');
           }
@@ -727,7 +825,35 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
           setPermissionLevel('READ');
         });
     }
-  }, [activeProjectId, refreshPendingCheckpointAndDiff]);
+  }, [activeProjectId, refreshPendingCheckpointAndDiff, fetchProjectScripts]);
+
+  const handleSetPermissionLevel = useCallback((level: PermissionLevel) => {
+    if (level === 'YOLO') {
+      addToast('YOLO mode is locked in Model Forge v0.6.0.', 'warning');
+      return;
+    }
+    if (level === 'AGENT') {
+      if (permissionLevel !== 'AGENT') {
+        setAgentPermissionModalOpen(true);
+      }
+      return;
+    }
+    if (level === 'EDIT') {
+      if (permissionLevel !== 'EDIT') {
+        setEditPermissionModalOpen(true);
+      }
+      return;
+    }
+    if (level === 'READ') {
+      setPermissionLevel('READ');
+      if (typeof window !== 'undefined' && window.modelForge?.disableAgent) {
+        window.modelForge.disableAgent().catch(console.error);
+      }
+      if (typeof window !== 'undefined' && window.modelForge?.disableEdit) {
+        window.modelForge.disableEdit().catch(console.error);
+      }
+    }
+  }, [permissionLevel, addToast]);
 
   const confirmEnableEdit = useCallback(async () => {
     if (!activeProjectId) {
@@ -755,6 +881,108 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
       setPermissionLevel('READ');
       setEditPermissionModalOpen(false);
       addToast('Desktop integration unavailable. Edit mode could not be enabled.', 'error');
+    }
+  }, [activeProjectId, addToast]);
+
+  const confirmEnableAgent = useCallback(async () => {
+    if (!activeProjectId) {
+      addToast('No active project selected.', 'warning');
+      return;
+    }
+
+    if (typeof window !== 'undefined' && window.modelForge?.enableAgentForProject) {
+      try {
+        const res = await window.modelForge.enableAgentForProject(activeProjectId);
+        if (res?.authorized && res.permissionLevel === 'AGENT') {
+          setPermissionLevel('AGENT');
+          setAgentPermissionModalOpen(false);
+          addToast('Agent mode enabled for active project in this session.', 'info');
+        } else {
+          setPermissionLevel('READ');
+          addToast('Failed to enable Agent mode for project.', 'error');
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setPermissionLevel('READ');
+        addToast(`Failed to enable Agent mode: ${msg}`, 'error');
+      }
+    } else {
+      setPermissionLevel('READ');
+      setAgentPermissionModalOpen(false);
+      addToast('Desktop integration unavailable. Agent mode could not be enabled.', 'error');
+    }
+  }, [activeProjectId, addToast]);
+
+  const disableAgent = useCallback(async () => {
+    setPermissionLevel('READ');
+    if (typeof window !== 'undefined' && window.modelForge?.disableAgent) {
+      try {
+        await window.modelForge.disableAgent();
+      } catch (err) {
+        console.error('[AppStore] disableAgent error:', err);
+      }
+    }
+  }, []);
+
+  const handleApproveCommandRequest = useCallback(async (requestId: string) => {
+    if (typeof window !== 'undefined' && window.modelForge?.approveCommandRequest) {
+      try {
+        const res = await window.modelForge.approveCommandRequest(requestId);
+        if (!res.success && res.error) {
+          addToast(`Command execution failed: ${res.error}`, 'error');
+        }
+        setPendingCommandRequest(null);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addToast(`Failed to approve command: ${msg}`, 'error');
+      }
+    }
+  }, [addToast]);
+
+  const handleDenyCommandRequest = useCallback(async (requestId: string, reason?: string) => {
+    if (typeof window !== 'undefined' && window.modelForge?.denyCommandRequest) {
+      try {
+        await window.modelForge.denyCommandRequest(requestId, reason);
+        setPendingCommandRequest(null);
+        addToast('Command request denied.', 'info');
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addToast(`Failed to deny command: ${msg}`, 'error');
+      }
+    }
+  }, [addToast]);
+
+  const handleStopActiveProcess = useCallback(async (): Promise<boolean> => {
+    if (typeof window !== 'undefined' && window.modelForge?.stopActiveProcess) {
+      try {
+        const stopped = await window.modelForge.stopActiveProcess();
+        if (stopped) {
+          addToast('Process stopped by user.', 'info');
+        }
+        return stopped;
+      } catch (err) {
+        console.error('[AppStore] stopActiveProcess error:', err);
+        return false;
+      }
+    }
+    return false;
+  }, [addToast]);
+
+  const handleRunManualScript = useCallback(async (script: string) => {
+    if (!activeProjectId) {
+      addToast('No active project selected.', 'warning');
+      return;
+    }
+    if (typeof window !== 'undefined' && window.modelForge?.runProjectScript) {
+      try {
+        const res = await window.modelForge.runProjectScript(activeProjectId, script);
+        if (res.error) {
+          addToast(`Failed to run script: ${res.error}`, 'error');
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addToast(`Failed to execute script "${script}": ${msg}`, 'error');
+      }
     }
   }, [activeProjectId, addToast]);
 
@@ -1032,12 +1260,27 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         addProject: handleAddProject,
         removeProject: handleRemoveProject,
 
-        // Permission Model (Pass 5)
+        // Permission Model (Pass 5 & Pass 6)
         permissionLevel,
-        setPermissionLevel,
+        setPermissionLevel: handleSetPermissionLevel,
         isEditPermissionModalOpen,
         setEditPermissionModalOpen,
         confirmEnableEdit,
+        isAgentPermissionModalOpen,
+        setAgentPermissionModalOpen,
+        confirmEnableAgent,
+        disableAgent,
+
+        // Process Execution & Terminal State (Pass 6)
+        activeProcessSession,
+        pendingCommandRequest,
+        discoveredScripts,
+        packageManager,
+        fetchProjectScripts,
+        approveCommandRequest: handleApproveCommandRequest,
+        denyCommandRequest: handleDenyCommandRequest,
+        stopActiveProcess: handleStopActiveProcess,
+        runManualScript: handleRunManualScript,
 
         models,
         modelLibraries,

@@ -90,14 +90,16 @@ export const TopStatusCards: React.FC = () => {
       {/* 4. Mode */}
       <div className="status-card">
         <div className="status-card-icon">
-          <Lock size={18} className={permissionLevel === 'EDIT' ? 'text-warning' : 'text-success'} />
+          <Lock size={18} className={permissionLevel === 'AGENT' ? 'text-accent' : permissionLevel === 'EDIT' ? 'text-warning' : 'text-success'} />
         </div>
         <div className="status-card-body">
           <span className="status-card-label">Mode</span>
-          <span className={`status-card-value font-mono ${permissionLevel === 'EDIT' ? 'text-warning' : ''}`}>
-            {permissionLevel === 'EDIT' ? 'EDIT MODE' : 'Safe / Read'}
+          <span className={`status-card-value font-mono ${permissionLevel === 'AGENT' ? 'text-accent' : permissionLevel === 'EDIT' ? 'text-warning' : ''}`}>
+            {permissionLevel === 'AGENT' ? 'AGENT MODE' : permissionLevel === 'EDIT' ? 'EDIT MODE' : 'Safe / Read'}
           </span>
-          <span className="status-card-sub">Workspace jailed</span>
+          <span className="status-card-sub">
+            {permissionLevel === 'AGENT' ? 'Supervised Process Run' : 'Workspace jailed'}
+          </span>
         </div>
       </div>
 

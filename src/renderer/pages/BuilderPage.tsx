@@ -6,6 +6,7 @@ import { AgentActivity } from './builder/AgentActivity';
 import { WorkspaceTabs } from './builder/WorkspaceTabs';
 import { CrashRecoveryBanner } from './builder/CrashRecoveryBanner';
 import { EditPermissionModal } from '@/components/common/EditPermissionModal';
+import { AgentEnableModal } from '@/components/common/AgentEnableModal';
 import './BuilderPage.css';
 
 export const BuilderPage: React.FC = () => {
@@ -33,8 +34,9 @@ export const BuilderPage: React.FC = () => {
         <WorkspaceTabs />
       </div>
 
-      {/* 4. Edit Permission Confirmation Modal */}
+      {/* 4. Permission Confirmation Modals */}
       <EditPermissionModal />
+      <AgentEnableModal />
     </div>
   );
 };

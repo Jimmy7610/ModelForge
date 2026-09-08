@@ -12,8 +12,9 @@ import { normalizePath, scanDirectoriesForGguf } from './models/scanner';
 import { getDriveStorageForPath } from './models/storage';
 import { InferenceService } from './inference';
 import { EditAgent, PlanAgent } from './agent';
-import { DiffService, EditAuthorizationService } from './edit';
+import { DiffService, SessionAuthorizationService } from './edit';
 import { WorkspaceGuard, WorkspaceTools } from './workspace';
+import { ProcessService } from './process';
 
 export function registerIpcHandlers(
   mainWindow: BrowserWindow,
@@ -22,15 +23,66 @@ export function registerIpcHandlers(
   inferenceService: InferenceService,
   existingPlanAgent?: PlanAgent,
   existingEditAgent?: EditAgent,
-  existingEditAuth?: EditAuthorizationService
+  existingEditAuth?: SessionAuthorizationService,
+  existingProcessService?: ProcessService
 ): void {
   const planAgent = existingPlanAgent || new PlanAgent(inferenceService);
-  const editAgent = existingEditAgent || new EditAgent(inferenceService);
+  const sessionAuthorization = existingEditAuth || new SessionAuthorizationService();
+  const editAuthorization = sessionAuthorization;
+  const processService = existingProcessService || new ProcessService();
+  const editAgent = existingEditAgent || new EditAgent(inferenceService, undefined, processService);
+  editAgent.setProcessService(processService);
   const checkpointService = editAgent.getCheckpointService();
-  const editAuthorization = existingEditAuth || new EditAuthorizationService();
+
+  // Setup process callbacks for streaming and state sync
+  processService.setCallbacks({
+    onChunk: (chunk) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.PROCESS_STREAM_CHUNK, chunk);
+      }
+    },
+    onStateChange: (state) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.PROCESS_STATE_CHANGED, state);
+      }
+    },
+    onRequestCreated: (req) => {
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.COMMAND_REQUEST_CREATED, req);
+      }
+    },
+  });
+
+  // Setup process hooks: Pre-process safety snapshot & post-process scan for manual terminal runs
+  processService.setHooks({
+    beforeExecute: async (request) => {
+      if (request.initiator === 'manual') {
+        const pending = checkpointService.getPendingCheckpoint(request.projectId);
+        let checkpointId: string;
+        if (pending && pending.type === 'automatic') {
+          checkpointId = pending.id;
+        } else {
+          const manifest = checkpointService.armAutomaticCheckpoint(
+            request.projectId,
+            request.cwd,
+            `Pre-process snapshot before manual execution of "${request.scriptName}"`
+          );
+          checkpointId = manifest.id;
+        }
+        await checkpointService.createPreProcessSafetySnapshot(request.projectId, request.cwd, checkpointId);
+      }
+    },
+    afterExecute: async (request, _session) => {
+      if (request.initiator === 'manual') {
+        const pending = checkpointService.getPendingCheckpoint(request.projectId);
+        if (pending && pending.type === 'automatic') {
+          await checkpointService.scanForProcessSourceChanges(request.projectId, request.cwd, pending.id);
+        }
+      }
+    },
+  });
 
   // Setup inference callbacks for streaming and state sync
-
   inferenceService.setCallbacks(
     (chunk) => {
       if (!mainWindow.isDestroyed()) {
@@ -220,12 +272,14 @@ export function registerIpcHandlers(
       return false;
     }
     store.setActiveProjectId(id);
-    // Active project switch immediately resets Edit authorization in Main memory
-    editAuthorization.disable();
+    // Active project switch immediately resets Edit and Agent authorization in Main memory and cancels any pending process
+    sessionAuthorization.disable();
+    processService.cancelAllPending(undefined, 'Active project changed');
+    processService.stopActiveProcess().catch(() => {});
     return true;
   });
 
-  // Edit Authorization Handlers (Main Process Authoritative)
+  // Edit & Agent Session Authorization Handlers (Main Process Authoritative)
   ipcMain.handle(IPC_CHANNELS.ENABLE_EDIT_FOR_PROJECT, (_event, rawProjectId: unknown) => {
     let projectId: string;
     if (typeof rawProjectId === 'string') {
@@ -243,21 +297,59 @@ export function registerIpcHandlers(
     const projects = store.getProjects();
     const project = projects.find((p) => p.id === projectId);
     if (!project) {
-      editAuthorization.disable();
+      sessionAuthorization.disable();
       throw new Error(`Project not found in registry: "${projectId}"`);
     }
 
-    const authorized = editAuthorization.enableForProject(project.id, true);
-    return { authorized, authorizedProjectId: authorized ? project.id : null };
+    const state = sessionAuthorization.enableEdit(project.id);
+    return { authorized: state.authorized, authorizedProjectId: state.authorizedProjectId, level: state.level };
   });
 
   ipcMain.handle(IPC_CHANNELS.DISABLE_EDIT, () => {
-    editAuthorization.disable();
-    return { authorized: false, authorizedProjectId: null };
+    sessionAuthorization.disable();
+    processService.cancelAllPending(undefined, 'Edit mode disabled');
+    processService.stopActiveProcess().catch(() => {});
+    return { authorized: false, authorizedProjectId: null, level: 'READ' };
   });
 
   ipcMain.handle(IPC_CHANNELS.GET_EDIT_AUTHORIZATION_STATE, () => {
-    return editAuthorization.getState();
+    return sessionAuthorization.getState();
+  });
+
+  // Pass 6 Session Authorization (AGENT mode)
+  ipcMain.handle(IPC_CHANNELS.ENABLE_AGENT_FOR_PROJECT, (_event, rawProjectId: unknown) => {
+    let projectId: string;
+    if (typeof rawProjectId === 'string') {
+      projectId = rawProjectId.trim();
+    } else if (rawProjectId && typeof rawProjectId === 'object' && 'projectId' in rawProjectId) {
+      projectId = String((rawProjectId as any).projectId || '').trim();
+    } else {
+      throw new Error('Invalid payload for enableAgentForProject: expected projectId string');
+    }
+
+    if (!projectId || projectId.length > 128) {
+      throw new Error('Invalid projectId for enableAgentForProject: non-empty string up to 128 chars required');
+    }
+
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      sessionAuthorization.disable();
+      throw new Error(`Project not found in registry: "${projectId}"`);
+    }
+
+    return sessionAuthorization.enableAgent(project.id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.DISABLE_AGENT, () => {
+    sessionAuthorization.disable();
+    processService.cancelAllPending(undefined, 'Agent mode disabled');
+    processService.stopActiveProcess().catch(() => {});
+    return { authorized: false, authorizedProjectId: null, level: 'READ' };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_SESSION_AUTHORIZATION_STATE, () => {
+    return sessionAuthorization.getState();
   });
 
 
@@ -538,9 +630,10 @@ export function registerIpcHandlers(
     const prompt = input.prompt.trim();
 
     // Enforce Main-side authorization boundary
-    if (!editAuthorization.isAuthorized(projectId)) {
+    if (!sessionAuthorization.isAuthorized(projectId)) {
       throw new Error('Edit permission is not enabled for this project.');
     }
+    const permissionLevel = sessionAuthorization.getLevel(projectId);
 
     const projects = store.getProjects();
     const project = projects.find((p) => p.id === projectId);
@@ -580,7 +673,8 @@ export function registerIpcHandlers(
             }
           },
         },
-        runId
+        runId,
+        permissionLevel
       )
       .catch((err) => {
         console.error('[IPC] EditAgent task error:', err);
@@ -714,6 +808,96 @@ export function registerIpcHandlers(
     }
     const registeredRoot = project.rootPath || project.path;
     return checkpointService.createManualCheckpoint(project.id, registeredRoot, description);
+  });
+
+  // Pass 6: Process Subsystem & Script Execution Handlers
+  ipcMain.handle(IPC_CHANNELS.GET_PROJECT_SCRIPTS, (_event, rawProjectId: unknown) => {
+    if (typeof rawProjectId !== 'string' || !rawProjectId.trim() || rawProjectId.length > 128) {
+      throw new Error('Invalid projectId');
+    }
+    const projectId = rawProjectId.trim();
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${projectId}`);
+    }
+    const registeredRoot = project.rootPath || project.path;
+    return processService.getProjectScripts(registeredRoot);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_PENDING_COMMAND_REQUEST, (_event, rawProjectId?: unknown) => {
+    const req = processService.getPendingRequest();
+    if (!req) return null;
+    if (rawProjectId && typeof rawProjectId === 'string' && rawProjectId.trim()) {
+      if (req.projectId !== rawProjectId.trim()) return null;
+    }
+    return req;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.APPROVE_COMMAND_REQUEST, async (_event, rawRequestId: unknown) => {
+    if (typeof rawRequestId !== 'string' || !rawRequestId.trim()) {
+      throw new Error('Invalid requestId');
+    }
+    return processService.approveRequest(rawRequestId.trim());
+  });
+
+  ipcMain.handle(IPC_CHANNELS.DENY_COMMAND_REQUEST, async (_event, payload: unknown) => {
+    let requestId = '';
+    let reason: string | undefined;
+    if (typeof payload === 'string') {
+      requestId = payload;
+    } else if (payload && typeof payload === 'object') {
+      const obj = payload as Record<string, unknown>;
+      if (typeof obj.requestId === 'string') requestId = obj.requestId;
+      if (typeof obj.reason === 'string') reason = obj.reason;
+    }
+    if (!requestId.trim()) {
+      throw new Error('Invalid requestId');
+    }
+    const result = processService.denyRequest(requestId.trim(), reason);
+    return result;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.STOP_ACTIVE_PROCESS, async () => {
+    return processService.stopActiveProcess();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GET_ACTIVE_PROCESS, () => {
+    return processService.getActiveSession();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RUN_PROJECT_SCRIPT, async (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('Invalid runProjectScript payload');
+    }
+    const obj = payload as Record<string, unknown>;
+    const projectId = typeof obj.projectId === 'string' ? obj.projectId.trim() : '';
+    const script = typeof obj.script === 'string' ? obj.script.trim() : '';
+    if (!projectId) throw new Error('Invalid projectId');
+    if (!script) throw new Error('Invalid script');
+
+    const projects = store.getProjects();
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) throw new Error(`Project not found: ${projectId}`);
+    const projectRoot = project.rootPath || project.path;
+
+    const requestPromise = processService.createCommandRequest({
+      projectId,
+      projectRoot,
+      scriptName: script,
+      initiator: 'manual',
+      reason: `Manual execution of script "${script}" from Terminal`,
+    });
+
+    requestPromise.catch((err) => {
+      console.error('[ProcessService] manual run error:', err);
+    });
+
+    const pending = processService.getPendingRequest();
+    return {
+      success: true,
+      requestId: pending?.requestId,
+    };
   });
 
   // System & Clipboard (Pass 4.1)

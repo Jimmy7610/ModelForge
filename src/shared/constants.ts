@@ -1,6 +1,6 @@
 import { AppSettings } from './types';
 
-export const APP_VERSION = '0.5.4';
+export const APP_VERSION = '0.6.0';
 export const SCHEMA_VERSION = 2;
 export const CHECKPOINT_SCHEMA_VERSION = 1;
 
@@ -70,6 +70,21 @@ export const IPC_CHANNELS = {
   ENABLE_EDIT_FOR_PROJECT: 'modelforge:enable-edit-for-project',
   DISABLE_EDIT: 'modelforge:disable-edit',
   GET_EDIT_AUTHORIZATION_STATE: 'modelforge:get-edit-authorization-state',
+
+  // Session Authorization & Agent Process (Pass 6)
+  ENABLE_AGENT_FOR_PROJECT: 'modelforge:enable-agent-for-project',
+  DISABLE_AGENT: 'modelforge:disable-agent',
+  GET_SESSION_AUTHORIZATION_STATE: 'modelforge:get-session-authorization-state',
+  GET_PROJECT_SCRIPTS: 'modelforge:get-project-scripts',
+  GET_PENDING_COMMAND_REQUEST: 'modelforge:get-pending-command-request',
+  APPROVE_COMMAND_REQUEST: 'modelforge:approve-command-request',
+  DENY_COMMAND_REQUEST: 'modelforge:deny-command-request',
+  STOP_ACTIVE_PROCESS: 'modelforge:stop-active-process',
+  GET_ACTIVE_PROCESS: 'modelforge:get-active-process',
+  RUN_PROJECT_SCRIPT: 'modelforge:run-project-script',
+  PROCESS_STREAM_CHUNK: 'modelforge:process-stream-chunk',
+  PROCESS_STATE_CHANGED: 'modelforge:process-state-changed',
+  COMMAND_REQUEST_CREATED: 'modelforge:command-request-created',
 
   // Read-Only Workspace Inspection Tools
   GET_PROJECT_OVERVIEW: 'modelforge:get-project-overview',

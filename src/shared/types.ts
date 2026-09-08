@@ -362,6 +362,75 @@ export interface RunEditPayload {
   prompt: string;
 }
 
+// Process & Agent Execution Types (Pass 6)
+export type ProcessKind = 'package_script';
+export type ProcessStatus =
+  | 'requested'
+  | 'approved'
+  | 'starting'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'denied'
+  | 'cancelled'
+  | 'timed_out';
+
+export type PackageManagerType = 'npm' | 'pnpm' | 'yarn' | 'bun';
+
+export interface DiscoveredScriptInfo {
+  name: string;
+  command: string;
+  category: 'test' | 'build' | 'lint' | 'typecheck' | 'dev' | 'start' | 'other';
+  isPersistent: boolean;
+}
+
+export interface PendingCommandRequest {
+  requestId: string;
+  runId?: string;
+  projectId: string;
+  kind: ProcessKind;
+  scriptName: string;
+  resolvedExecutable: string;
+  resolvedArgs: string[];
+  cwd: string;
+  reason: string;
+  initiator?: 'manual' | 'agent';
+  timestamp: string;
+  riskSummary: string;
+  status: 'pending' | 'approved' | 'denied' | 'cancelled' | 'timed_out';
+}
+
+export interface ProcessSessionInfo {
+  id: string;
+  requestId: string;
+  runId?: string;
+  projectId: string;
+  commandDisplay: string;
+  executable: string;
+  args: string[];
+  cwd: string;
+  pid?: number;
+  status: ProcessStatus;
+  startedAt?: string;
+  endedAt?: string;
+  durationMs?: number;
+  exitCode?: number | null;
+  retainedOutput: string;
+  outputTruncated: boolean;
+}
+
+export interface ProcessOutputChunk {
+  sessionId: string;
+  stream: 'stdout' | 'stderr';
+  text: string;
+  timestamp: string;
+}
+
+export interface SessionAuthorizationState {
+  permissionLevel: PermissionLevel;
+  authorizedProjectId: string | null;
+}
+
 export interface ModelForgeAPI {
   // Diagnostics & Bridge Health
   getBridgeInfo: () => BridgeInfo;
@@ -419,6 +488,21 @@ export interface ModelForgeAPI {
   onEditAgentActivity: (callback: (activity: AgentActivityItem) => void) => () => void;
   onEditAgentChunk: (callback: (chunk: ChatGenerationChunk) => void) => () => void;
   onEditAgentStateChange: (callback: (state: EditAgentState) => void) => () => void;
+
+  // Session Authorization & Agent Process (Pass 6)
+  enableAgentForProject: (projectId: string) => Promise<{ authorized: boolean; authorizedProjectId: string | null; permissionLevel: PermissionLevel }>;
+  disableAgent: () => Promise<void>;
+  getSessionAuthorizationState: () => Promise<SessionAuthorizationState>;
+  getProjectScripts: (projectId: string) => Promise<{ packageManager: PackageManagerType; scripts: DiscoveredScriptInfo[] }>;
+  getPendingCommandRequest: () => Promise<PendingCommandRequest | null>;
+  approveCommandRequest: (requestId: string) => Promise<{ success: boolean; sessionId?: string; error?: string }>;
+  denyCommandRequest: (requestId: string, reason?: string) => Promise<{ success: boolean }>;
+  stopActiveProcess: () => Promise<boolean>;
+  getActiveProcess: () => Promise<ProcessSessionInfo | null>;
+  runProjectScript: (projectId: string, script: string) => Promise<{ success: boolean; requestId?: string; error?: string }>;
+  onProcessStreamChunk: (callback: (chunk: ProcessOutputChunk) => void) => () => void;
+  onProcessStateChange: (callback: (session: ProcessSessionInfo) => void) => () => void;
+  onCommandRequestCreated: (callback: (req: PendingCommandRequest) => void) => () => void;
 
   // Read-Only Workspace Inspection Tools
   getProjectOverview: (projectId?: string) => Promise<any>;

@@ -9,6 +9,7 @@ export const AgentPermissions: React.FC = () => {
     permissionLevel,
     setPermissionLevel,
     setEditPermissionModalOpen,
+    setAgentPermissionModalOpen,
     activeProject,
     addToast,
   } = useAppStore();
@@ -16,9 +17,6 @@ export const AgentPermissions: React.FC = () => {
   const handleModeClick = (mode: PermissionLevel) => {
     if (mode === 'READ') {
       setPermissionLevel('READ');
-      if (typeof window !== 'undefined' && window.modelForge?.disableEdit) {
-        window.modelForge.disableEdit().catch(console.error);
-      }
     } else if (mode === 'EDIT') {
       if (permissionLevel === 'EDIT') return;
       if (!activeProject) {
@@ -26,12 +24,20 @@ export const AgentPermissions: React.FC = () => {
         return;
       }
       setEditPermissionModalOpen(true);
+    } else if (mode === 'AGENT') {
+      if (permissionLevel === 'AGENT') return;
+      if (!activeProject) {
+        addToast('Select an active project first to enable Agent mode.', 'warning');
+        return;
+      }
+      setAgentPermissionModalOpen(true);
     } else {
-      addToast(`${mode} mode is locked in v0.5.1.`, 'info');
+      addToast('YOLO mode is locked in Model Forge v0.6.0.', 'warning');
     }
   };
 
   const isEdit = permissionLevel === 'EDIT';
+  const isAgent = permissionLevel === 'AGENT';
 
   return (
     <div className="panel agent-permissions-panel">
@@ -40,16 +46,18 @@ export const AgentPermissions: React.FC = () => {
         <div className="permissions-left">
           <div className="permissions-header">
             <div className="permissions-title">
-              <Lock size={15} className={isEdit ? 'text-warning' : 'text-success'} />
-              <span>{isEdit ? 'EDIT MODE' : 'Agent Permissions'}</span>
-              <span className="badge badge-local">Workspace Jailed</span>
+              <Lock size={15} className={isAgent ? 'text-accent' : isEdit ? 'text-warning' : 'text-success'} />
+              <span>{isAgent ? 'AGENT MODE' : isEdit ? 'EDIT MODE' : 'Agent Permissions'}</span>
+              <span className={`badge ${isAgent ? 'badge-accent' : 'badge-local'}`}>
+                {isAgent ? 'Supervised Process Run' : 'Workspace Jailed'}
+              </span>
             </div>
 
             {/* Mode Selector Pill Buttons */}
             <div className="mode-selector">
               {(['READ', 'EDIT', 'AGENT', 'YOLO'] as PermissionLevel[]).map((mode) => {
                 const isActive = permissionLevel === mode;
-                const isLocked = mode === 'AGENT' || mode === 'YOLO';
+                const isLocked = mode === 'YOLO';
                 return (
                   <button
                     key={mode}
@@ -60,7 +68,9 @@ export const AgentPermissions: React.FC = () => {
                         ? 'Safe read-only inspection'
                         : mode === 'EDIT'
                         ? 'Workspace jailed text and code modifications'
-                        : `${mode} mode is locked in v0.5.0`
+                        : mode === 'AGENT'
+                        ? 'Supervised process execution and code modifications'
+                        : 'YOLO mode is locked in v0.6.0'
                     }
                   >
                     <span>{mode}</span>
@@ -81,7 +91,26 @@ export const AgentPermissions: React.FC = () => {
               <CheckCircle2 size={13} className="rule-icon success" />
               <span>Outside filesystem blocked</span>
             </div>
-            {isEdit ? (
+            {isAgent ? (
+              <>
+                <div className="rule-item">
+                  <CheckCircle2 size={13} className="rule-icon success" />
+                  <span>Text edits & mutations allowed</span>
+                </div>
+                <div className="rule-item">
+                  <CheckCircle2 size={13} className="rule-icon success" />
+                  <span>Pre-process safety snapshots</span>
+                </div>
+                <div className="rule-item">
+                  <CheckCircle2 size={13} className="rule-icon success" />
+                  <span>Supervised npm script execution</span>
+                </div>
+                <div className="rule-item">
+                  <CheckCircle2 size={13} className="rule-icon success" />
+                  <span>Normal Windows permissions (not jailed)</span>
+                </div>
+              </>
+            ) : isEdit ? (
               <>
                 <div className="rule-item">
                   <CheckCircle2 size={13} className="rule-icon success" />
@@ -94,6 +123,10 @@ export const AgentPermissions: React.FC = () => {
                 <div className="rule-item">
                   <CheckCircle2 size={13} className="rule-icon success" />
                   <span>Diff review & Rollback</span>
+                </div>
+                <div className="rule-item text-muted">
+                  <Ban size={13} className="rule-icon text-muted" />
+                  <span>Process execution disabled</span>
                 </div>
               </>
             ) : (
@@ -110,19 +143,21 @@ export const AgentPermissions: React.FC = () => {
                   <CheckCircle2 size={13} className="rule-icon success" />
                   <span>Plan agent allowed</span>
                 </div>
+                <div className="rule-item text-muted">
+                  <Ban size={13} className="rule-icon text-muted" />
+                  <span>Terminal & process execution disabled</span>
+                </div>
               </>
             )}
-            <div className="rule-item text-muted">
-              <Ban size={13} className="rule-icon text-muted" />
-              <span>Terminal & process execution disabled</span>
-            </div>
           </div>
 
           <div className="permissions-footnote">
             <span>
-              {isEdit
+              {isAgent
+                ? 'Agent mode enables supervised execution of project package.json scripts with per-run user approval.'
+                : isEdit
                 ? 'Editing is scoped to text files within the active project for this session.'
-                : 'Safe Read is active. Run Agent requires enabling Edit mode.'}
+                : 'Safe Read is active. Run Agent requires enabling Edit or Agent mode.'}
             </span>
           </div>
         </div>
@@ -130,7 +165,11 @@ export const AgentPermissions: React.FC = () => {
         {/* Right Side: Visual Shield Outline */}
         <div className="permissions-right">
           <div className="shield-graphic-container">
-            <Shield size={58} strokeWidth={1.2} className={`shield-icon ${isEdit ? 'text-warning' : ''}`} />
+            <Shield
+              size={58}
+              strokeWidth={1.2}
+              className={`shield-icon ${isAgent ? 'text-accent' : isEdit ? 'text-warning' : ''}`}
+            />
           </div>
         </div>
       </div>

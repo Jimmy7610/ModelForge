@@ -30,6 +30,7 @@ export const AgentActivity: React.FC = () => {
     isPlanning,
     isEditing,
     editAgentState,
+    permissionLevel,
     addToast,
   } = useAppStore();
   const [showPreview, setShowPreview] = useState(false);
@@ -230,7 +231,48 @@ export const AgentActivity: React.FC = () => {
           </div>
 
           {/* Safe Mode Status Card */}
-          {isEditRun ? (
+          {permissionLevel === 'AGENT' ? (
+            <div className="test-metric-card">
+              <div className="test-metric-left">
+                <div className="test-pass-badge" style={{ background: 'rgba(56, 189, 248, 0.15)', borderColor: 'rgba(56, 189, 248, 0.4)' }}>
+                  <ShieldCheck size={22} style={{ color: '#38bdf8' }} />
+                </div>
+                <div className="test-pass-info">
+                  <div className="test-pass-score font-mono" style={{ color: '#38bdf8' }}>AGENT — SUPERVISED RUN</div>
+                  <div className="test-pass-sub">
+                    {displaySteps.length} action{displaySteps.length === 1 ? '' : 's'} recorded · {successfulMutations} mutation{successfulMutations === 1 ? '' : 's'} applied
+                  </div>
+                </div>
+              </div>
+
+              <div className="test-metric-stats font-mono">
+                <div className="metric-stat-row">
+                  <span className="stat-label">Mode</span>
+                  <span className="stat-value text-accent">Agent (Supervised)</span>
+                </div>
+                <div className="metric-stat-row">
+                  <span className="stat-label">File Tools</span>
+                  <span className="stat-value text-success">Workspace Jailed</span>
+                </div>
+                <div className="metric-stat-row">
+                  <span className="stat-label">Processes</span>
+                  <span className="stat-value text-accent">Windows Perms</span>
+                </div>
+                <div className="metric-stat-row">
+                  <span className="stat-label">Mutations</span>
+                  <span className="stat-value text-success">
+                    {successfulMutations} applied{blockedMutations > 0 ? ` (${blockedMutations} blocked)` : ''}
+                  </span>
+                </div>
+                {readsCount > 0 && (
+                  <div className="metric-stat-row">
+                    <span className="stat-label">Reads</span>
+                    <span className="stat-value text-muted">{readsCount} inspected</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : isEditRun ? (
             <div className="test-metric-card">
               <div className="test-metric-left">
                 <div className="test-pass-badge" style={{ background: 'rgba(16, 185, 129, 0.15)', borderColor: 'rgba(16, 185, 129, 0.4)' }}>

@@ -80,7 +80,7 @@ describe('Preload & Bridge Architecture Contract', () => {
     expect(dummyApi.getBridgeInfo).toBeDefined();
     const result = dummyApi.getBridgeInfo!();
     expect(result.available).toBe(true);
-    expect(result.version).toBe('0.5.4');
+    expect(result.version).toBe('0.6.0');
     expect(result.preloadFormat).toBe('cjs');
     expect(dummyApi.copyText).toBeDefined();
     expect(dummyApi.runEditAgent).toBeDefined();

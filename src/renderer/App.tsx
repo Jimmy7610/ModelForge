@@ -3,6 +3,7 @@ import { TitleBar } from './components/chrome/TitleBar';
 import { Sidebar } from './components/chrome/Sidebar';
 import { StatusBar } from './components/chrome/StatusBar';
 import { CommandPalette } from './components/chrome/CommandPalette';
+import { CommandApprovalModal } from './components/common/CommandApprovalModal';
 import { BuilderPage } from './pages/BuilderPage';
 import { HomePage } from './pages/HomePage';
 import { ModelsPage } from './pages/ModelsPage';
@@ -61,6 +62,9 @@ const AppContent: React.FC = () => {
 
       {/* Global Ctrl+K Command Palette */}
       <CommandPalette />
+
+      {/* Global Process Command Approval Modal */}
+      <CommandApprovalModal />
 
       {/* Contextual Toast Notifications */}
       <div className="toast-container" aria-live="polite">

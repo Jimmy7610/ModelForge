@@ -1117,6 +1117,183 @@ export class CheckpointService {
   }
 
   /**
+   * Creates or augments an active checkpoint with a complete safety snapshot of all writable
+   * source/text files BEFORE a supervised process executes in AGENT mode.
+   *
+   * Hard cap: 100 MB. If cap exceeded, blocks execution safely without partial snapshots.
+   */
+  public async createPreProcessSafetySnapshot(
+    projectId: string,
+    projectRoot: string,
+    checkpointId?: string
+  ): Promise<CheckpointManifest> {
+    if (!CheckpointService.isValidProjectId(projectId)) {
+      throw new CheckpointError(`Invalid project identifier: "${projectId}"`);
+    }
+
+    const canonicalRoot = path.resolve(projectRoot);
+    if (!fs.existsSync(canonicalRoot)) {
+      throw new CheckpointError(`Project root does not exist: "${projectRoot}"`);
+    }
+
+    let manifest: CheckpointManifest | null = null;
+
+    if (checkpointId) {
+      manifest = this.loadManifest(projectId, checkpointId);
+    }
+    if (!manifest) {
+      const summary = this.getPendingCheckpoint(projectId);
+      if (summary) {
+        manifest = this.loadManifest(projectId, summary.id);
+      }
+    }
+    if (!manifest) {
+      manifest = this.armAutomaticCheckpoint(projectId, canonicalRoot, 'Pre-Process Safety Checkpoint');
+      this.ensurePending(manifest);
+    }
+
+    const checkpointDir = this.getCheckpointDir(projectId, manifest.id);
+    const filesDir = path.join(checkpointDir, 'files');
+    if (!fs.existsSync(filesDir)) {
+      fs.mkdirSync(filesDir, { recursive: true });
+    }
+
+    const maxSafetyBytes = 100 * 1024 * 1024; // 100 MB hard cap
+    let totalBytes = manifest.totalBackupBytes;
+
+    const filesToBackup: Array<{ fullPath: string; relPath: string; stat: fs.Stats }> = [];
+
+    const walk = (currentDir: string) => {
+      const items = fs.readdirSync(currentDir, { withFileTypes: true });
+      for (const item of items) {
+        const fullPath = path.join(currentDir, item.name);
+        const rel = path.relative(canonicalRoot, fullPath);
+        const relPath = normalizeWorkspacePath(rel);
+
+        if (item.isDirectory()) {
+          if (isIgnoredDirectory(item.name)) continue;
+          walk(fullPath);
+        } else if (item.isFile()) {
+          if (isSensitiveFile(fullPath) || isBinaryFile(fullPath)) continue;
+
+          const stat = fs.statSync(fullPath);
+          // If not already snapshotted, track prospective bytes
+          if (!manifest!.files[relPath]) {
+            totalBytes += stat.size;
+            if (totalBytes > maxSafetyBytes) {
+              throw new CheckpointError(
+                `Unable to create a safe pre-process snapshot: project source files would exceed 100 MB safety cap (${totalBytes} bytes). Command execution was blocked.`
+              );
+            }
+            filesToBackup.push({ fullPath, relPath, stat });
+          }
+        }
+      }
+    };
+
+    walk(canonicalRoot);
+
+    // Apply all backups
+    for (const item of filesToBackup) {
+      const buf = fs.readFileSync(item.fullPath);
+      const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+      const backupFileName = `${sha256}.bak`;
+      const backupPath = path.join(filesDir, backupFileName);
+
+      if (!fs.existsSync(backupPath)) {
+        fs.writeFileSync(backupPath, buf);
+      }
+
+      manifest.files[item.relPath] = {
+        relativePath: item.relPath,
+        existedBefore: true,
+        originalSha256: sha256,
+        originalSizeBytes: buf.length,
+        backupFileName,
+      };
+      manifest.totalBackupBytes += buf.length;
+    }
+
+    manifest.status = 'pending';
+    this.saveManifest(manifest);
+    return manifest;
+  }
+
+  /**
+   * Scans project workspace AFTER a process completes to detect any source/text files
+   * modified, created, or deleted by the process, merging them into the active checkpoint.
+   */
+  public async scanForProcessSourceChanges(
+    projectId: string,
+    projectRoot: string,
+    checkpointId: string
+  ): Promise<{ modifiedFiles: string[]; createdFiles: string[]; deletedFiles: string[] }> {
+    const manifest = this.loadManifest(projectId, checkpointId);
+    if (!manifest) {
+      throw new CheckpointError(`Checkpoint not found: "${checkpointId}"`);
+    }
+
+    const canonicalRoot = path.resolve(projectRoot);
+    const foundOnDisk = new Set<string>();
+    const modifiedFiles: string[] = [];
+    const createdFiles: string[] = [];
+    const deletedFiles: string[] = [];
+
+    const walk = (currentDir: string) => {
+      const items = fs.readdirSync(currentDir, { withFileTypes: true });
+      for (const item of items) {
+        const fullPath = path.join(currentDir, item.name);
+        const rel = path.relative(canonicalRoot, fullPath);
+        const relPath = normalizeWorkspacePath(rel);
+
+        if (item.isDirectory()) {
+          if (isIgnoredDirectory(item.name)) continue;
+          walk(fullPath);
+        } else if (item.isFile()) {
+          if (isSensitiveFile(fullPath) || isBinaryFile(fullPath)) continue;
+
+          foundOnDisk.add(relPath);
+          const buf = fs.readFileSync(fullPath);
+          const currentSha256 = crypto.createHash('sha256').update(buf).digest('hex');
+
+          if (manifest.files[relPath]) {
+            const entry = manifest.files[relPath];
+            const previousSha = entry.lastAgentSha256 || entry.originalSha256;
+            if (previousSha !== currentSha256) {
+              entry.lastAgentSha256 = currentSha256;
+              modifiedFiles.push(relPath);
+            }
+          } else {
+            // New file created by process
+            manifest.files[relPath] = {
+              relativePath: relPath,
+              existedBefore: false,
+              lastAgentSha256: currentSha256,
+            };
+            createdFiles.push(relPath);
+          }
+        }
+      }
+    };
+
+    walk(canonicalRoot);
+
+    // Check for files deleted by process
+    for (const [relPath, entry] of Object.entries(manifest.files)) {
+      if (entry.existedBefore && !foundOnDisk.has(relPath) && entry.lastAgentSha256 !== undefined) {
+        entry.lastAgentSha256 = undefined;
+        deletedFiles.push(relPath);
+      }
+    }
+
+    if (modifiedFiles.length > 0 || createdFiles.length > 0 || deletedFiles.length > 0) {
+      this.saveManifest(manifest);
+    }
+
+    return { modifiedFiles, createdFiles, deletedFiles };
+  }
+
+  /**
    * Retention cleanup: keeps 5 recent completed/manual checkpoints per project.
    * NEVER cleans a currently pending recovery checkpoint.
    */

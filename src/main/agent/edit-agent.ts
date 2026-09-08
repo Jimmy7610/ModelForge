@@ -3,6 +3,7 @@ import {
   AgentActivityItem,
   EditAgentState,
   EditExecutionSummary,
+  PermissionLevel,
   Project,
 } from '../../shared/types';
 import { WorkspaceGuard } from '../workspace/guard';
@@ -11,10 +12,12 @@ import { EditAgentCallbacks } from './types';
 import { CheckpointService } from '../edit/checkpoint-service';
 import { EditSession } from '../edit/edit-session';
 import { DEFAULT_MUTATION_LIMITS } from '../edit/types';
+import { ProcessService } from '../process/process-service';
 
 export class EditAgent {
   private inferenceService: InferenceService;
   private checkpointService: CheckpointService;
+  private processService: ProcessService | null = null;
   private status: EditAgentState['status'] = 'idle';
   private activeProjectId: string | null = null;
   private activeRunId: string | null = null;
@@ -34,9 +37,18 @@ export class EditAgent {
   public readonly MAX_FILE_WRITES = EditAgent.MAX_FILE_WRITES;
   public readonly MAX_TIMEOUT_MS = EditAgent.MAX_TIMEOUT_MS;
 
-  constructor(inferenceService: InferenceService, checkpointService?: CheckpointService) {
+  constructor(
+    inferenceService: InferenceService,
+    checkpointService?: CheckpointService,
+    processService?: ProcessService
+  ) {
     this.inferenceService = inferenceService;
     this.checkpointService = checkpointService || new CheckpointService();
+    this.processService = processService || null;
+  }
+
+  public setProcessService(processService: ProcessService): void {
+    this.processService = processService;
   }
 
   public getCheckpointService(): CheckpointService {
@@ -65,6 +77,10 @@ export class EditAgent {
     try {
       this.abortController.abort();
       await this.inferenceService.stopGeneration();
+      if (this.processService) {
+        this.processService.cancelAllPending(this.activeProjectId || undefined, 'Agent stopped by user');
+        await this.processService.stopActiveProcess();
+      }
       this.status = 'stopped';
       this.currentActivity = 'Edit session stopped by user. Partial changes preserved for Diff review.';
       return true;
@@ -87,7 +103,8 @@ export class EditAgent {
     project: Project,
     prompt: string,
     callbacks?: EditAgentCallbacks,
-    runId?: string
+    runId?: string,
+    permissionLevel: PermissionLevel = 'EDIT'
   ): Promise<string> {
     const projectPath = project.rootPath || project.path;
     if (!project || !projectPath) {
@@ -137,6 +154,9 @@ export class EditAgent {
     let successfulToolCalls = 0;
     let failedToolCalls = 0;
     let blockedToolCalls = 0;
+    let commandsExecuted = 0;
+    let commandsPassed = 0;
+    let commandsFailed = 0;
     const distinctToolNames = new Set<string>();
     const filesModified = new Set<string>();
     const filesCreated = new Set<string>();
@@ -656,6 +676,154 @@ export class EditAgent {
               }
             },
           }),
+
+          // --- SUPERVISED PROCESS EXECUTION (AGENT MODE ONLY) ---
+          ...(permissionLevel === 'AGENT' && this.processService
+            ? {
+                request_project_script: fnWrapper({
+                  description:
+                    'Request execution of an existing package.json script (e.g. "test", "build", "lint") for the project. The command requires explicit user approval before execution.',
+                  params: {
+                    type: 'object',
+                    properties: {
+                      script: {
+                        type: 'string',
+                        minLength: 1,
+                        description: 'Exact name of the existing script in package.json (e.g. "test")',
+                      },
+                      reason: {
+                        type: 'string',
+                        minLength: 1,
+                        description: 'Clear reason why this script needs to be executed',
+                      },
+                    },
+                    required: ['script', 'reason'],
+                  },
+                  handler: async (args: { script?: string; reason?: string }) => {
+                    totalToolCalls++;
+                    distinctToolNames.add('request_project_script');
+                    const scriptName = args?.script ? String(args.script).trim() : '';
+                    const reason = args?.reason ? String(args.reason).trim() : 'Project script execution';
+                    const act = recordActivity(
+                      `Requesting command "${scriptName}"...`,
+                      'request_project_script',
+                      args
+                    );
+
+                    if (!checkToolBudget(act)) {
+                      failedToolCalls++;
+                      return budgetReachedResponse;
+                    }
+
+                    if (!scriptName) {
+                      blockedToolCalls++;
+                      act.blocked('Script name cannot be empty.', 'Invalid command request — script name required');
+                      return JSON.stringify({
+                        error: 'Script name cannot be empty. Inspect package.json to see available scripts.',
+                        blocked: true,
+                      });
+                    }
+
+                    try {
+                      if (this.abortController?.signal.aborted) throw new Error('Edit cancelled');
+
+                      // Execute pre-process safety snapshot before requesting command
+                      if (this.activeCheckpointId) {
+                        try {
+                          await this.checkpointService.createPreProcessSafetySnapshot(
+                            project.id,
+                            projectPath,
+                            this.activeCheckpointId
+                          );
+                        } catch (snapErr: any) {
+                          blockedToolCalls++;
+                          act.blocked(snapErr.message, 'Pre-process safety snapshot blocked');
+                          return JSON.stringify({
+                            error: `Unable to create a safe pre-process snapshot: ${snapErr.message}. Command execution was blocked.`,
+                            blocked: true,
+                          });
+                        }
+                      }
+
+                      act.done('Awaiting user approval...', `⏳ Requested npm run ${scriptName}`);
+
+                      const execRes = await this.processService!.createCommandRequest({
+                        projectId: project.id,
+                        projectRoot: projectPath,
+                        kind: 'package_script',
+                        scriptName,
+                        reason,
+                        runId: currentRunId,
+                      });
+
+                      if (execRes.denied) {
+                        blockedToolCalls++;
+                        const denyAct = recordActivity(`Command denied: ${scriptName}`, 'request_project_script');
+                        denyAct.blocked('User denied approval for this command.', `✗ Command denied: ${scriptName}`);
+                        return JSON.stringify({
+                          denied: true,
+                          message: 'User denied this command. Do not repeat the same request. Continue with your analysis or code edits.',
+                        });
+                      }
+
+                      if (execRes.cancelled) {
+                        blockedToolCalls++;
+                        const cancelAct = recordActivity(`Command cancelled: ${scriptName}`, 'request_project_script');
+                        cancelAct.blocked('Command cancelled.', `✗ Command cancelled: ${scriptName}`);
+                        return JSON.stringify({
+                          cancelled: true,
+                          message: 'Command execution was cancelled.',
+                        });
+                      }
+
+                      // Post-process source change scan to merge any process modifications into checkpoint
+                      if (this.activeCheckpointId) {
+                        try {
+                          const changes = await this.checkpointService.scanForProcessSourceChanges(
+                            project.id,
+                            projectPath,
+                            this.activeCheckpointId
+                          );
+                          for (const f of changes.modifiedFiles) filesModified.add(f);
+                          for (const f of changes.createdFiles) filesCreated.add(f);
+                          for (const f of changes.deletedFiles) filesDeleted.add(f);
+                        } catch (scanErr) {
+                          console.error('[EditAgent] post-process change scan failed:', scanErr);
+                        }
+                      }
+
+                      successfulToolCalls++;
+                      commandsExecuted++;
+
+                      if (execRes.success) {
+                        commandsPassed++;
+                        const passAct = recordActivity(`Command passed: ${scriptName} (exit 0)`, 'request_project_script');
+                        passAct.done(`Exit 0 (${execRes.durationMs}ms)`, `✓ npm run ${scriptName} exited 0`);
+                      } else {
+                        commandsFailed++;
+                        const failAct = recordActivity(`Command failed: ${scriptName} (exit ${execRes.exitCode})`, 'request_project_script');
+                        failAct.done(`Exit ${execRes.exitCode} (${execRes.durationMs}ms)`, `✗ npm run ${scriptName} exited ${execRes.exitCode}`);
+                      }
+
+                      return JSON.stringify({
+                        success: execRes.success,
+                        script: scriptName,
+                        exitCode: execRes.exitCode,
+                        stdout: execRes.stdout,
+                        stderr: execRes.stderr,
+                        durationMs: execRes.durationMs,
+                        message: execRes.message,
+                      });
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      failedToolCalls++;
+                      act.fail(msg, `Command failed: ${scriptName}`);
+                      return JSON.stringify({ error: msg });
+                    }
+                  },
+                }),
+              }
+            : {}),
         });
 
         if (typeof defineFn === 'function') {
@@ -665,8 +833,22 @@ export class EditAgent {
         console.warn('[EditAgent] node-llama-cpp function calling setup error:', err);
       }
 
-      // 4. System Instruction for Edit Agent
-      const systemInstruction = `You are Model Forge's Edit Agent.
+      // 4. System Instruction for Agent / Edit Agent
+      const isAgent = permissionLevel === 'AGENT';
+      const systemInstruction = isAgent
+        ? `You are Model Forge's Agent.
+You have read and edit tools strictly jailed to the active project workspace.
+You can request supervised execution of existing package.json scripts (e.g. test, build) using request_project_script.
+Workspace containment is strictly enforced on file tools: external paths, symlink escapes, parent traversals, sensitive credentials (.env, keys), and binary files are rejected.
+Process execution is supervised: every command requires explicit user approval before running.
+
+WORKFLOW:
+1. INSPECT BEFORE EDITING: Use list_directory, search_text, and read_file to inspect relevant files before modifying them.
+2. READ BEFORE WRITE: You MUST call read_file on any existing file before calling replace_in_file, write_file, or delete_file.
+3. PREFER SURGICAL CHANGES: Use replace_in_file with exact matching text to modify existing files.
+4. TEST VERIFICATION: When appropriate, call request_project_script with script "test" to run tests. The user will be prompted to approve the command. If the test fails, inspect output, fix code, and re-test.
+5. HONESTY: Only report that tests passed if a real test command was approved and exited with code 0.`
+        : `You are Model Forge's Edit Agent.
 You have read and edit tools strictly jailed to the active project workspace.
 Workspace containment is strictly enforced: external paths, symlink escapes, parent traversals, sensitive credentials (.env, keys), and binary files are rejected.
 
@@ -681,14 +863,15 @@ WORKFLOW:
 INSTRUCTION:
 First inspect the necessary files with read_file or list_directory.
 Then apply all requested code changes using replace_in_file, create_file, write_file, or delete_file.
+${isAgent ? 'When appropriate, execute tests via request_project_script and fix any issues.' : ''}
 Be sure to perform every requested modification and file creation.
 Finally summarize the files modified and confirm completion.`;
 
-      this.currentActivity = 'Model executing edits...';
+      this.currentActivity = isAgent ? 'Agent executing task...' : 'Model executing edits...';
       notifyState();
 
       let followUpCount = 0;
-      const maxFollowUps = 2;
+      const maxFollowUps = isAgent ? 6 : 2;
       let summaryDone = false;
 
       const followUpPrompt = async (): Promise<string | null> => {
@@ -697,12 +880,26 @@ Finally summarize the files modified and confirm completion.`;
         followUpCount++;
 
         const totalMutations = filesModified.size + filesCreated.size + filesDeleted.size;
+
+        if (isAgent) {
+          // If a command failed, encourage the model to inspect and fix
+          if (commandsFailed > 0 && commandsPassed === 0 && followUpCount < maxFollowUps) {
+            return 'The previous command failed. Inspect the failure output, edit the necessary code files to fix the issue, and request the test command again.';
+          }
+          if (commandsPassed > 0 || totalMutations > 0) {
+            const currentSummary = this.resultMessage.trim();
+            if (currentSummary.length >= 30 || summaryDone) {
+              return null;
+            }
+            summaryDone = true;
+            return 'Please provide a clear final summary of the changes you made and the commands executed.';
+          }
+        }
+
         if (totalMutations === 0) {
           return 'Now proceed to make the requested file changes using replace_in_file, create_file, or write_file.';
         }
 
-        // If at least one successful mutation occurred, never ask for more edits.
-        // If model already produced summary text, terminate immediately.
         const currentSummary = this.resultMessage.trim();
         if (currentSummary.length >= 30 || summaryDone) {
           return null;
@@ -751,13 +948,24 @@ Finally summarize the files modified and confirm completion.`;
         durationMs,
       };
 
-      // Construct honest standardized result header if files were modified
+      // Construct honest standardized result header
       let finalChatOutput = '';
       if (totalTouched > 0) {
-        finalChatOutput = `### EDIT COMPLETE\n\n**${totalTouched} file(s) changed:**\n`;
+        finalChatOutput = `### ${isAgent ? 'AGENT' : 'EDIT'} COMPLETE\n\n**${totalTouched} file(s) changed:**\n`;
         for (const f of createdList) finalChatOutput += `- Created \`${f}\`\n`;
         for (const f of modifiedList) finalChatOutput += `- Modified \`${f}\`\n`;
         for (const f of deletedList) finalChatOutput += `- Deleted \`${f}\`\n`;
+      }
+
+      if (isAgent) {
+        if (commandsPassed > 0 && commandsFailed === 0) {
+          finalChatOutput += `\n**Tests**: Passed (exit 0 from approved test script).\n\n`;
+        } else if (commandsFailed > 0) {
+          finalChatOutput += `\n**Tests**: Failed (exit non-zero from test script).\n\n`;
+        } else {
+          finalChatOutput += `\n**Tests**: Not run — no test scripts were executed.\n\n`;
+        }
+      } else {
         finalChatOutput += `\n**Tests**: Not run — terminal access is disabled in Edit mode.\n\n`;
       }
 

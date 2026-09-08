@@ -160,6 +160,10 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [isRecoveryBannerDismissed, setIsRecoveryBannerDismissed] = useState(false);
   const [fileTreeRefreshCounter, setFileTreeRefreshCounter] = useState(0);
 
+  const checkpointRefreshSeqRef = useRef<number>(0);
+  const pendingCheckpointRef = useRef<CheckpointSummary | null>(null);
+  pendingCheckpointRef.current = pendingCheckpoint;
+
 
   const addToast = useCallback((message: string, type: ToastItem['type'] = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);
@@ -656,24 +660,52 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, []);
 
   const refreshPendingCheckpointAndDiff = useCallback(async () => {
+    const seq = ++checkpointRefreshSeqRef.current;
     if (typeof window === 'undefined' || !window.modelForge || !activeProjectId) {
       setPendingCheckpoint(null);
       setCheckpointDiff(null);
       return;
     }
+    const currentProjectId = activeProjectId;
     try {
-      const pending = await window.modelForge.getPendingCheckpoint(activeProjectId);
+      const pending = await window.modelForge.getPendingCheckpoint(currentProjectId);
+      if (seq !== checkpointRefreshSeqRef.current) return;
       setPendingCheckpoint(pending);
       if (pending?.id) {
-        const diff = await window.modelForge.getCheckpointDiff(pending.id, activeProjectId);
+        const diff = await window.modelForge.getCheckpointDiff(pending.id, currentProjectId);
+        if (seq !== checkpointRefreshSeqRef.current) return;
         setCheckpointDiff(diff);
       } else {
         setCheckpointDiff(null);
       }
     } catch (err) {
-      console.error('[AppStore] Failed to refresh checkpoint and diff:', err);
+      if (seq === checkpointRefreshSeqRef.current) {
+        console.error('[AppStore] Failed to refresh checkpoint and diff:', err);
+        setPendingCheckpoint(null);
+        setCheckpointDiff(null);
+      }
     }
   }, [activeProjectId]);
+
+  const finalizeCheckpointUiState = useCallback(
+    async (actedCheckpointId: string) => {
+      // Invalidate any in-flight reconciliation
+      checkpointRefreshSeqRef.current++;
+
+      // Authoritative immediate clear: only clear if active checkpoint matches what was acted upon
+      if (pendingCheckpointRef.current?.id === actedCheckpointId) {
+        setPendingCheckpoint(null);
+        setCheckpointDiff(null);
+      }
+
+      // Bump file tree counter to immediately refresh file tree & preview
+      setFileTreeRefreshCounter((c) => c + 1);
+
+      // Reconcile with Main in case another real pending checkpoint exists
+      await refreshPendingCheckpointAndDiff();
+    },
+    [refreshPendingCheckpointAndDiff]
+  );
 
   useEffect(() => {
     refreshPendingCheckpointAndDiff();
@@ -882,25 +914,27 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const handleAcceptCheckpoint = useCallback(async () => {
     if (!activeProjectId || !pendingCheckpoint) return;
+    const targetCheckpointId = pendingCheckpoint.id;
     try {
-      await window.modelForge.acceptCheckpoint(pendingCheckpoint.id, activeProjectId);
-      addToast('Changes accepted.', 'success');
-      await refreshPendingCheckpointAndDiff();
-      setFileTreeRefreshCounter((c) => c + 1);
+      const res = await window.modelForge.acceptCheckpoint(targetCheckpointId, activeProjectId);
+      if (res?.success) {
+        addToast('Changes accepted.', 'success');
+        await finalizeCheckpointUiState(targetCheckpointId);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       addToast(`Accept failed: ${msg}`, 'error');
     }
-  }, [activeProjectId, pendingCheckpoint, addToast, refreshPendingCheckpointAndDiff]);
+  }, [activeProjectId, pendingCheckpoint, addToast, finalizeCheckpointUiState]);
 
   const handleRollbackCheckpoint = useCallback(async (): Promise<RollbackResult | null> => {
     if (!activeProjectId || !pendingCheckpoint) return null;
+    const targetCheckpointId = pendingCheckpoint.id;
     try {
-      const result = await window.modelForge.rollbackCheckpoint(pendingCheckpoint.id, activeProjectId);
+      const result = await window.modelForge.rollbackCheckpoint(targetCheckpointId, activeProjectId);
       if (result.success) {
         addToast(`Rollback complete. Restored ${result.restoredFiles.length} file(s).`, 'success');
-        await refreshPendingCheckpointAndDiff();
-        setFileTreeRefreshCounter((c) => c + 1);
+        await finalizeCheckpointUiState(targetCheckpointId);
         return result;
       } else {
         if (result.conflicts && result.conflicts.length > 0) {
@@ -916,7 +950,7 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
       addToast(`Rollback failed: ${msg}`, 'error');
       return null;
     }
-  }, [activeProjectId, pendingCheckpoint, addToast, refreshPendingCheckpointAndDiff]);
+  }, [activeProjectId, pendingCheckpoint, addToast, finalizeCheckpointUiState, refreshPendingCheckpointAndDiff]);
 
   const handleCreateManualCheckpoint = useCallback(
     async (description?: string): Promise<CheckpointSummary | null> => {

@@ -10,7 +10,7 @@ import {
 } from './types';
 import { CheckpointError } from './errors';
 import { isBinaryFile, isIgnoredDirectory, isSensitiveFile } from '../workspace/file-policy';
-import { normalizeWorkspacePath } from '../workspace/path-policy';
+import { normalizeWorkspacePath, resolveCanonicalPath } from '../workspace/path-policy';
 import { WorkspaceGuard } from '../workspace/guard';
 import { CHECKPOINT_SCHEMA_VERSION } from '../../shared/constants';
 
@@ -479,8 +479,14 @@ export class CheckpointService {
     }
 
     // Verify authoritative guard root matches manifest root exactly
-    const canonicalManifestRoot = path.resolve(manifest.projectRoot);
-    if (authoritativeGuard.canonicalRootPath !== canonicalManifestRoot) {
+    const canonicalManifestRoot = resolveCanonicalPath(manifest.projectRoot);
+    const matchesRoot =
+      process.platform === 'win32'
+        ? normalizeWorkspacePath(authoritativeGuard.canonicalRootPath).toLowerCase() ===
+          normalizeWorkspacePath(canonicalManifestRoot).toLowerCase()
+        : authoritativeGuard.canonicalRootPath === canonicalManifestRoot;
+
+    if (!matchesRoot) {
       throw new CheckpointError('Checkpoint workspace location no longer matches the registered project.');
     }
 
@@ -562,8 +568,14 @@ export class CheckpointService {
 
     const guard = authoritativeGuard;
     const canonicalTarget = guard.canonicalRootPath;
-    const canonicalManifestRoot = path.resolve(manifest.projectRoot);
-    if (canonicalTarget !== canonicalManifestRoot) {
+    const canonicalManifestRoot = resolveCanonicalPath(manifest.projectRoot);
+    const matchesRoot =
+      process.platform === 'win32'
+        ? normalizeWorkspacePath(canonicalTarget).toLowerCase() ===
+          normalizeWorkspacePath(canonicalManifestRoot).toLowerCase()
+        : canonicalTarget === canonicalManifestRoot;
+
+    if (!matchesRoot) {
       return {
         success: false,
         checkpointId,

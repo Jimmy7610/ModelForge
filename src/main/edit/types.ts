@@ -48,6 +48,7 @@ export interface MutationValidationResult {
 export interface EditToolResult {
   success: boolean;
   status?: 'success' | 'error';
+  alreadyApplied?: boolean;
   message: string;
   relativePath: string;
   bytesWritten?: number;

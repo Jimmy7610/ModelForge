@@ -31,6 +31,19 @@ export class EditSession {
   private readFiles = new Map<string, ReadRecord>();
   private touchedFiles = new Set<string>();
   private cumulativeBytesWritten = 0;
+  private appliedFingerprints = new Set<string>();
+
+  public computeFingerprint(parts: string[]): string {
+    return crypto.createHash('sha256').update(parts.join('\0')).digest('hex');
+  }
+
+  public hasMutationFingerprint(fingerprint: string): boolean {
+    return this.appliedFingerprints.has(fingerprint);
+  }
+
+  public getAppliedFingerprints(): string[] {
+    return Array.from(this.appliedFingerprints);
+  }
 
   constructor(options: {
     guard: WorkspaceGuard;
@@ -130,7 +143,29 @@ export class EditSession {
       );
     }
 
+    const contentHash = crypto.createHash('sha256').update(Buffer.from(options.content, 'utf8')).digest('hex');
+    const fingerprint = this.computeFingerprint(['create', check.relativePath, contentHash]);
+
     if (fs.existsSync(check.canonicalPath)) {
+      if (this.appliedFingerprints.has(fingerprint)) {
+        try {
+          const diskContent = fs.readFileSync(check.canonicalPath, 'utf8');
+          if (diskContent === options.content) {
+            return {
+              success: true,
+              status: 'success',
+              alreadyApplied: true,
+              message: `File "${check.relativePath}" has already been created with this identical content in this session. Do not repeat this operation.`,
+              relativePath: check.relativePath,
+              bytesWritten: 0,
+              operation: 'create',
+            };
+          }
+        } catch {
+          // If disk read fails, fall through to error below
+        }
+      }
+
       throw new MutationBlockedError(
         `File already exists: "${check.relativePath}". Use replace_in_file or write_file to modify existing files.`,
         check.relativePath
@@ -177,6 +212,7 @@ export class EditSession {
       createdDirs
     );
 
+    this.appliedFingerprints.add(fingerprint);
     this.touchedFiles.add(check.relativePath);
     this.cumulativeBytesWritten += bytes;
 
@@ -251,8 +287,31 @@ export class EditSession {
     const currentText = currentBuf.toString('utf8');
 
     // 3. Match validation
+    const fingerprint = this.computeFingerprint([
+      'replace',
+      check.relativePath,
+      oldText,
+      newText,
+      replaceAll ? 'all' : 'single',
+    ]);
+
     const occurrences = currentText.split(oldText).length - 1;
     if (occurrences === 0) {
+      // Idempotency detection:
+      // If this exact replacement was already successfully applied in this session,
+      // and newText is present in the file, return alreadyApplied without disk mutation.
+      if (this.appliedFingerprints.has(fingerprint) && currentText.includes(newText)) {
+        return {
+          success: true,
+          status: 'success',
+          alreadyApplied: true,
+          message: `The requested edit is already applied to "${check.relativePath}". Do not repeat this operation. Continue with any remaining requested work or provide your final summary.`,
+          relativePath: check.relativePath,
+          bytesWritten: 0,
+          operation: 'modify',
+        };
+      }
+
       throw new MutationBlockedError(
         `Target oldText was not found in "${check.relativePath}". Inspect the current file contents.`,
         check.relativePath
@@ -303,6 +362,7 @@ export class EditSession {
     });
 
     this.checkpointService.recordMutationSuccess(this.manifest, check.relativePath, newHash);
+    this.appliedFingerprints.add(fingerprint);
     this.touchedFiles.add(check.relativePath);
     this.cumulativeBytesWritten += bytes;
 
@@ -339,6 +399,9 @@ export class EditSession {
     this.mutationPolicy.assertExistingFileIsText(check.canonicalPath, check.relativePath);
     const bytes = this.mutationPolicy.assertWriteContentSafe(options.content, check.relativePath);
 
+    const contentHash = crypto.createHash('sha256').update(Buffer.from(options.content, 'utf8')).digest('hex');
+    const fingerprint = this.computeFingerprint(['write', check.relativePath, contentHash]);
+
     // Read-Before-Write check
     const readRecord = this.readFiles.get(check.canonicalPath);
     if (!readRecord) {
@@ -350,6 +413,19 @@ export class EditSession {
     const currentHash = crypto.createHash('sha256').update(currentBuf).digest('hex');
     if (currentHash !== readRecord.sha256) {
       throw new ConcurrencyConflictError(check.relativePath);
+    }
+
+    const currentText = currentBuf.toString('utf8');
+    if (this.appliedFingerprints.has(fingerprint) && currentText === options.content) {
+      return {
+        success: true,
+        status: 'success',
+        alreadyApplied: true,
+        message: `File "${check.relativePath}" already contains this exact content from this session. Do not repeat this write.`,
+        relativePath: check.relativePath,
+        bytesWritten: 0,
+        operation: 'modify',
+      };
     }
 
     // Limit checks
@@ -383,6 +459,7 @@ export class EditSession {
     });
 
     this.checkpointService.recordMutationSuccess(this.manifest, check.relativePath, newHash);
+    this.appliedFingerprints.add(fingerprint);
     this.touchedFiles.add(check.relativePath);
     this.cumulativeBytesWritten += bytes;
 
@@ -414,7 +491,20 @@ export class EditSession {
 
     this.mutationPolicy.assertMutablePath(check.relativePath);
 
+    const fingerprint = this.computeFingerprint(['delete', check.relativePath]);
+
     if (!fs.existsSync(check.canonicalPath)) {
+      if (this.appliedFingerprints.has(fingerprint)) {
+        return {
+          success: true,
+          status: 'success',
+          alreadyApplied: true,
+          message: `File "${check.relativePath}" was already successfully deleted in this session. Do not repeat this deletion.`,
+          relativePath: check.relativePath,
+          operation: 'delete',
+        };
+      }
+
       throw new MutationBlockedError(
         `Cannot delete non-existent file: "${check.relativePath}".`,
         check.relativePath
@@ -455,6 +545,7 @@ export class EditSession {
     fs.unlinkSync(check.canonicalPath);
 
     this.checkpointService.recordFileDeleted(this.manifest, check.relativePath);
+    this.appliedFingerprints.add(fingerprint);
     this.readFiles.delete(check.canonicalPath);
     this.touchedFiles.add(check.relativePath);
 

@@ -214,6 +214,17 @@ export class EditAgent {
         const nlc = await import('node-llama-cpp');
         const defineFn = nlc.defineChatSessionFunction || (nlc as any).default?.defineChatSessionFunction;
 
+        const checkToolBudget = (act: ReturnType<typeof recordActivity>): boolean => {
+          if (totalToolCalls > this.MAX_TOOL_CALLS) {
+            act.fail('Tool budget reached', 'Tool budget reached');
+            return false;
+          }
+          return true;
+        };
+        const budgetReachedResponse = JSON.stringify({
+          error: 'Tool budget reached. Stop calling tools now and output your final summary.',
+        });
+
         const buildFunctions = (fnWrapper: Function) => ({
           // --- READ TOOLS ---
           get_project_overview: fnWrapper({
@@ -223,6 +234,10 @@ export class EditAgent {
               totalToolCalls++;
               distinctToolNames.add('get_project_overview');
               const act = recordActivity('Inspecting project overview...', 'get_project_overview');
+              if (!checkToolBudget(act)) {
+                failedToolCalls++;
+                return budgetReachedResponse;
+              }
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Edit cancelled');
                 const overview = await session.tools.getProjectOverview();
@@ -254,6 +269,10 @@ export class EditAgent {
               const target = args?.path || '.';
               const displayLabel = `Listed ${target}`;
               const act = recordActivity(`Listing directory "${target}"...`, 'list_directory', args);
+              if (!checkToolBudget(act)) {
+                failedToolCalls++;
+                return budgetReachedResponse;
+              }
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Edit cancelled');
                 const res = await session.tools.listDirectory({
@@ -303,6 +322,10 @@ export class EditAgent {
               distinctToolNames.add('read_file');
               const displayLabel = `Read ${args?.path}`;
               const act = recordActivity(`Reading "${args?.path}"...`, 'read_file', args);
+              if (!checkToolBudget(act)) {
+                failedToolCalls++;
+                return budgetReachedResponse;
+              }
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Edit cancelled');
                 const res = await session.readFile(args);
@@ -344,6 +367,10 @@ export class EditAgent {
               distinctToolNames.add('search_text');
               const displayLabel = `Searched "${args?.query}"`;
               const act = recordActivity(`Searching "${args?.query}"...`, 'search_text', args);
+              if (!checkToolBudget(act)) {
+                failedToolCalls++;
+                return budgetReachedResponse;
+              }
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Edit cancelled');
                 const res = await session.tools.searchText({
@@ -388,10 +415,22 @@ export class EditAgent {
               distinctToolNames.add('create_file');
               const displayLabel = `Created ${args?.path}`;
               const act = recordActivity(`Creating file "${args?.path}"...`, 'create_file', { path: args?.path });
+              if (!checkToolBudget(act)) {
+                failedToolCalls++;
+                return budgetReachedResponse;
+              }
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Edit cancelled');
                 const res = await session.createFile(args);
                 successfulToolCalls++;
+                if (res.alreadyApplied) {
+                  act.done('Already created', `✓ File already created: ${args?.path}`);
+                  return JSON.stringify({
+                    success: true,
+                    alreadyApplied: true,
+                    message: 'The requested mutation is already present. Do not repeat this operation. Continue with any remaining requested work or provide your final summary.',
+                  });
+                }
                 filesCreated.add(res.relativePath);
                 act.done(`Created (${res.bytesWritten} bytes)`, displayLabel);
                 return JSON.stringify({
@@ -436,15 +475,23 @@ export class EditAgent {
               const displayLabel = `Modified ${args?.path}`;
               const act = recordActivity(`Modifying "${args?.path}"...`, 'replace_in_file', { path: args?.path });
 
-              if (totalToolCalls > 25) {
-                act.fail('Tool budget reached', 'Tool budget reached');
-                return JSON.stringify({ error: 'Tool budget reached. Stop calling tools now and output your final summary.' });
+              if (!checkToolBudget(act)) {
+                failedToolCalls++;
+                return budgetReachedResponse;
               }
 
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Edit cancelled');
                 const res = await session.replaceInFile(args);
                 successfulToolCalls++;
+                if (res.alreadyApplied) {
+                  act.done('Already applied', `✓ Edit already applied to ${args?.path}`);
+                  return JSON.stringify({
+                    success: true,
+                    alreadyApplied: true,
+                    message: 'The requested mutation is already present. Do not repeat this operation. Continue with any remaining requested work or provide your final summary.',
+                  });
+                }
                 filesModified.add(res.relativePath);
                 act.done('Modified', displayLabel);
                 return JSON.stringify({
@@ -487,15 +534,23 @@ export class EditAgent {
               const displayLabel = `Wrote ${args?.path}`;
               const act = recordActivity(`Writing file "${args?.path}"...`, 'write_file', { path: args?.path });
 
-              if (totalToolCalls > 25) {
-                act.fail('Tool budget reached', 'Tool budget reached');
-                return JSON.stringify({ error: 'Tool budget reached. Stop calling tools now and output your final summary.' });
+              if (!checkToolBudget(act)) {
+                failedToolCalls++;
+                return budgetReachedResponse;
               }
 
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Edit cancelled');
                 const res = await session.writeFile(args);
                 successfulToolCalls++;
+                if (res.alreadyApplied) {
+                  act.done('Already applied', `✓ Content already present in ${args?.path}`);
+                  return JSON.stringify({
+                    success: true,
+                    alreadyApplied: true,
+                    message: 'The requested mutation is already present. Do not repeat this operation. Continue with any remaining requested work or provide your final summary.',
+                  });
+                }
                 if (res.operation === 'create') {
                   filesCreated.add(res.relativePath);
                 } else {
@@ -540,10 +595,22 @@ export class EditAgent {
               distinctToolNames.add('delete_file');
               const displayLabel = `Deleted ${args?.path}`;
               const act = recordActivity(`Deleting file "${args?.path}"...`, 'delete_file', args);
+              if (!checkToolBudget(act)) {
+                failedToolCalls++;
+                return budgetReachedResponse;
+              }
               try {
                 if (this.abortController?.signal.aborted) throw new Error('Edit cancelled');
                 const res = await session.deleteFile(args);
                 successfulToolCalls++;
+                if (res.alreadyApplied) {
+                  act.done('Already deleted', `✓ File already deleted: ${args?.path}`);
+                  return JSON.stringify({
+                    success: true,
+                    alreadyApplied: true,
+                    message: 'The requested mutation is already present. Do not repeat this operation. Continue with any remaining requested work or provide your final summary.',
+                  });
+                }
                 filesDeleted.add(res.relativePath);
                 act.done('Deleted', displayLabel);
                 return JSON.stringify({ success: true, message: res.message });
@@ -609,11 +676,16 @@ Finally summarize the files modified and confirm completion.`;
         if (totalMutations === 0) {
           return 'Now proceed to make the requested file changes using replace_in_file, create_file, or write_file.';
         }
-        if (!summaryDone && this.resultMessage.trim().length < 100) {
-          summaryDone = true;
-          return 'Please provide a clear final summary of the files you modified, created, or deleted, and state that tests were not executed.';
+
+        // If at least one successful mutation occurred, never ask for more edits.
+        // If model already produced summary text, terminate immediately.
+        const currentSummary = this.resultMessage.trim();
+        if (currentSummary.length >= 30 || summaryDone) {
+          return null;
         }
-        return null;
+
+        summaryDone = true;
+        return 'Please provide a clear final summary of the files you modified, created, or deleted, and state that tests were not executed.';
       };
 
       const generatedSummary = await this.inferenceService.executeAgentPrompt({

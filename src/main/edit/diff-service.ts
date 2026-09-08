@@ -8,6 +8,7 @@ import {
 } from './types';
 
 import { WorkspaceGuard } from '../workspace/guard';
+import { normalizeWorkspacePath, resolveCanonicalPath } from '../workspace/path-policy';
 
 export interface DiffHunk {
   oldStart: number;
@@ -38,8 +39,14 @@ export class DiffService {
         ? authoritativeTarget
         : new WorkspaceGuard(path.resolve(authoritativeTarget));
 
-    const canonicalManifestRoot = path.resolve(manifest.projectRoot);
-    if (guard.canonicalRootPath !== canonicalManifestRoot) {
+    const canonicalManifestRoot = resolveCanonicalPath(manifest.projectRoot);
+    const matchesRoot =
+      process.platform === 'win32'
+        ? normalizeWorkspacePath(guard.canonicalRootPath).toLowerCase() ===
+          normalizeWorkspacePath(canonicalManifestRoot).toLowerCase()
+        : guard.canonicalRootPath === canonicalManifestRoot;
+
+    if (!matchesRoot) {
       throw new Error('Checkpoint workspace location no longer matches the registered project.');
     }
 

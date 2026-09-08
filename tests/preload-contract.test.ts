@@ -37,7 +37,7 @@ describe('Preload & Bridge Architecture Contract', () => {
     };
 
     expect(bridgeInfo.available).toBe(true);
-    expect(bridgeInfo.version).toBe('0.5.3');
+    expect(bridgeInfo.version).toBe(APP_VERSION);
     expect(bridgeInfo.preloadFormat).toBe('cjs');
   });
 
@@ -80,7 +80,7 @@ describe('Preload & Bridge Architecture Contract', () => {
     expect(dummyApi.getBridgeInfo).toBeDefined();
     const result = dummyApi.getBridgeInfo!();
     expect(result.available).toBe(true);
-    expect(result.version).toBe('0.5.3');
+    expect(result.version).toBe('0.5.4');
     expect(result.preloadFormat).toBe('cjs');
     expect(dummyApi.copyText).toBeDefined();
     expect(dummyApi.runEditAgent).toBeDefined();

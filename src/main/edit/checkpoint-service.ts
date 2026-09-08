@@ -7,6 +7,7 @@ import {
   CheckpointManifest,
   CheckpointSummary,
   RollbackResult,
+  RollbackVerificationFailure,
 } from './types';
 import { CheckpointError } from './errors';
 import { isBinaryFile, isIgnoredDirectory, isSensitiveFile } from '../workspace/file-policy';
@@ -785,53 +786,172 @@ export class CheckpointService {
     // ==========================================
     // STEP 2: ATOMIC EXECUTION (ZERO WRITES BEFORE THIS POINT)
     // ==========================================
+    // Capture pre-rollback in-memory backups of files about to be modified
+    // for safe rollback-of-rollback if a disk write fails mid-execution.
+    const preRollbackBackups = new Map<string, { existed: boolean; bytes?: Buffer }>();
+    for (const item of validatedItems) {
+      if (fs.existsSync(item.targetCanonicalPath)) {
+        try {
+          preRollbackBackups.set(item.targetCanonicalPath, {
+            existed: true,
+            bytes: fs.readFileSync(item.targetCanonicalPath),
+          });
+        } catch {
+          // ignore read error during pre-backup
+        }
+      } else {
+        preRollbackBackups.set(item.targetCanonicalPath, { existed: false });
+      }
+    }
+
     const restoredFiles: string[] = [];
     const deletedCreatedFiles: string[] = [];
     const cleanedDirs: string[] = [];
 
-    for (const item of validatedItems) {
-      if (!item.entry.existedBefore) {
-        if (fs.existsSync(item.targetCanonicalPath)) {
-          fs.unlinkSync(item.targetCanonicalPath);
-          deletedCreatedFiles.push(item.relPath);
-        }
+    try {
+      for (const item of validatedItems) {
+        if (!item.entry.existedBefore) {
+          if (fs.existsSync(item.targetCanonicalPath)) {
+            fs.unlinkSync(item.targetCanonicalPath);
+            deletedCreatedFiles.push(item.relPath);
+          }
 
-        if (item.entry.createdParentDirs && item.entry.createdParentDirs.length > 0) {
-          for (const dirRel of item.entry.createdParentDirs) {
-            try {
-              const checkDir = guard.resolveWritePath(dirRel);
-              if (checkDir.allowed && fs.existsSync(checkDir.canonicalPath) && fs.readdirSync(checkDir.canonicalPath).length === 0) {
-                fs.rmdirSync(checkDir.canonicalPath);
-                cleanedDirs.push(dirRel);
+          if (item.entry.createdParentDirs && item.entry.createdParentDirs.length > 0) {
+            for (const dirRel of item.entry.createdParentDirs) {
+              try {
+                const checkDir = guard.resolveWritePath(dirRel);
+                if (checkDir.allowed && fs.existsSync(checkDir.canonicalPath) && fs.readdirSync(checkDir.canonicalPath).length === 0) {
+                  fs.rmdirSync(checkDir.canonicalPath);
+                  cleanedDirs.push(dirRel);
+                }
+              } catch {
+                // ignore directory removal error
               }
-            } catch {
-              // ignore directory removal error
             }
           }
+        } else {
+          if (item.backupBytes) {
+            const parentDir = path.dirname(item.targetCanonicalPath);
+            if (!fs.existsSync(parentDir)) {
+              fs.mkdirSync(parentDir, { recursive: true });
+            }
+            fs.writeFileSync(item.targetCanonicalPath, item.backupBytes);
+            restoredFiles.push(item.relPath);
+          }
+        }
+      }
+    } catch (writeErr: any) {
+      // Disk write failed mid-execution: attempt restoring pre-rollback in-memory state
+      for (const [targetPath, backup] of preRollbackBackups.entries()) {
+        try {
+          if (backup.existed && backup.bytes) {
+            fs.writeFileSync(targetPath, backup.bytes);
+          } else if (!backup.existed && fs.existsSync(targetPath)) {
+            fs.unlinkSync(targetPath);
+          }
+        } catch {
+          // ignore fallback restore errors
+        }
+      }
+      manifest.status = 'conflict';
+      this.saveManifest(manifest);
+      return {
+        success: false,
+        verified: false,
+        checkpointId,
+        restoredFiles,
+        deletedCreatedFiles,
+        cleanedDirs,
+        conflicts: [{ relativePath: 'rollback', reason: `Disk write failed during rollback: ${writeErr.message}` }],
+        error: `Disk write failed during rollback: ${writeErr.message}`,
+      };
+    }
+
+    // ==========================================
+    // STEP 3: MANDATORY POSTCONDITION VERIFICATION
+    // Verify that the disk state ACTUALLY matches baseline before declaring success.
+    // ==========================================
+    const verifiedFiles: string[] = [];
+    const verificationFailures: RollbackVerificationFailure[] = [];
+
+    for (const item of validatedItems) {
+      if (!item.entry.existedBefore) {
+        // Agent-created file must NOT exist on disk after rollback
+        if (fs.existsSync(item.targetCanonicalPath)) {
+          verificationFailures.push({
+            relativePath: item.relPath,
+            reason: `Agent-created file still exists on disk after rollback: "${item.relPath}"`,
+          });
+        } else {
+          verifiedFiles.push(item.relPath);
         }
       } else {
-        if (item.backupBytes) {
-          const parentDir = path.dirname(item.targetCanonicalPath);
-          if (!fs.existsSync(parentDir)) {
-            fs.mkdirSync(parentDir, { recursive: true });
+        // Pre-existing file must exist on disk AND its SHA-256 must match originalSha256
+        if (!fs.existsSync(item.targetCanonicalPath)) {
+          verificationFailures.push({
+            relativePath: item.relPath,
+            expectedSha256: item.entry.originalSha256,
+            reason: `Restored baseline file is missing on disk: "${item.relPath}"`,
+          });
+        } else {
+          try {
+            const diskBytes = fs.readFileSync(item.targetCanonicalPath);
+            const diskSha = crypto.createHash('sha256').update(diskBytes).digest('hex');
+            if (item.entry.originalSha256 && diskSha !== item.entry.originalSha256) {
+              verificationFailures.push({
+                relativePath: item.relPath,
+                expectedSha256: item.entry.originalSha256,
+                actualSha256: diskSha,
+                reason: `Restored file SHA-256 mismatch on disk: expected ${item.entry.originalSha256}, got ${diskSha}`,
+              });
+            } else {
+              verifiedFiles.push(item.relPath);
+            }
+          } catch (readErr: any) {
+            verificationFailures.push({
+              relativePath: item.relPath,
+              expectedSha256: item.entry.originalSha256,
+              reason: `Failed to verify restored file on disk: ${readErr.message}`,
+            });
           }
-          fs.writeFileSync(item.targetCanonicalPath, item.backupBytes);
-          restoredFiles.push(item.relPath);
         }
       }
     }
 
+    if (verificationFailures.length > 0) {
+      // DO NOT mark rolled_back if even one file fails verification
+      manifest.status = 'conflict';
+      this.saveManifest(manifest);
+      return {
+        success: false,
+        verified: false,
+        checkpointId,
+        restoredFiles,
+        deletedCreatedFiles,
+        cleanedDirs,
+        conflicts: verificationFailures.map((vf) => ({
+          relativePath: vf.relativePath,
+          reason: vf.reason,
+        })),
+        verificationFailures,
+        error: `Rollback verification failed for ${verificationFailures.length} file(s). Workspace was not fully restored to baseline.`,
+      };
+    }
+
+    // ONLY when EVERY file is verified against the filesystem:
     manifest.status = 'rolled_back';
     this.saveManifest(manifest);
     this.cleanupOldCheckpoints(projectId);
 
     return {
       success: true,
+      verified: true,
       checkpointId,
       restoredFiles,
       deletedCreatedFiles,
       cleanedDirs,
       conflicts: [],
+      verifiedFiles,
     };
   }
 

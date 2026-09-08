@@ -211,6 +211,7 @@ export type AgentActivityStatus = 'running' | 'done' | 'blocked' | 'error';
 export interface AgentActivityItem {
   id: string;
   runId?: string;
+  runKind?: 'plan' | 'edit';
   label: string;
   time: string;
   status: AgentActivityStatus;
@@ -312,6 +313,13 @@ export interface CheckpointDiffResult {
   hasConflict: boolean;
 }
 
+export interface RollbackVerificationFailure {
+  relativePath: string;
+  expectedSha256?: string;
+  actualSha256?: string;
+  reason: string;
+}
+
 export interface RollbackResult {
   success: boolean;
   checkpointId: string;
@@ -319,6 +327,9 @@ export interface RollbackResult {
   deletedCreatedFiles: string[];
   cleanedDirs: string[];
   conflicts: Array<{ relativePath: string; reason: string }>;
+  verified?: boolean;
+  verifiedFiles?: string[];
+  verificationFailures?: RollbackVerificationFailure[];
   error?: string;
 }
 

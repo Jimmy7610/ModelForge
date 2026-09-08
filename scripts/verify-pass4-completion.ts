@@ -14,7 +14,11 @@ async function main() {
   console.log('MODEL FORGE PASS 4 COMPLETION / CORRECTION QA SCRIPT');
   console.log('====================================================');
 
-  const modelPath = 'S:\\AI\\Models\\GGUF\\qwen2.5-coder-7b-instruct-q4_k_m.gguf';
+  const modelPath = process.env.MODEL_FORGE_TEST_GGUF;
+  if (!modelPath) {
+    console.log('[INFO] MODEL_FORGE_TEST_GGUF is required for pass 4 QA script.');
+    process.exit(0);
+  }
   if (!fs.existsSync(modelPath)) {
     console.error(`Model file not found at: ${modelPath}`);
     process.exit(1);

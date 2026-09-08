@@ -25,6 +25,11 @@ export const DiffTab: React.FC = () => {
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
 
+  // Reconcile pending checkpoint and diff when Diff tab mounts or becomes active
+  useEffect(() => {
+    refreshPendingCheckpointAndDiff();
+  }, [refreshPendingCheckpointAndDiff]);
+
   // Auto-select first file if not selected
   useEffect(() => {
     if (checkpointDiff?.files && checkpointDiff.files.length > 0) {

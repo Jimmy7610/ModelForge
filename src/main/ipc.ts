@@ -548,6 +548,14 @@ export function registerIpcHandlers(
       throw new Error(`Project not found: ${projectId}`);
     }
 
+    // Enforce one-pending-edit transaction rule: block starting new Edit Agent while unreviewed automatic changes exist
+    const existingPending = checkpointService.getPendingCheckpoint(projectId);
+    if (existingPending && existingPending.type === 'automatic') {
+      throw new Error(
+        'You have pending changes. Accept or Rollback them before starting another Edit run.'
+      );
+    }
+
     const runId = crypto.randomUUID();
 
     // Start editing task asynchronously

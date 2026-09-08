@@ -163,6 +163,7 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
   const checkpointRefreshSeqRef = useRef<number>(0);
   const pendingCheckpointRef = useRef<CheckpointSummary | null>(null);
   pendingCheckpointRef.current = pendingCheckpoint;
+  const refreshPendingCheckpointAndDiffRef = useRef<(() => Promise<void>) | null>(null);
 
 
   const addToast = useCallback((message: string, type: ToastItem['type'] = 'info') => {
@@ -364,6 +365,7 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
           if (chunk.isDone) {
             setIsEditing(false);
             setFileTreeRefreshCounter((c) => c + 1);
+            refreshPendingCheckpointAndDiffRef.current?.();
           }
         });
       }
@@ -378,6 +380,7 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
           setIsEditing(state.status === 'running');
           if (state.status !== 'running') {
             setFileTreeRefreshCounter((c) => c + 1);
+            refreshPendingCheckpointAndDiffRef.current?.();
           }
         });
       }
@@ -686,6 +689,7 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
       }
     }
   }, [activeProjectId]);
+  refreshPendingCheckpointAndDiffRef.current = refreshPendingCheckpointAndDiff;
 
   const finalizeCheckpointUiState = useCallback(
     async (actedCheckpointId: string) => {
@@ -848,6 +852,16 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
         return;
       }
 
+      // Enforce one-pending-edit transaction rule: user must Accept or Rollback before starting new Edit
+      if (pendingCheckpoint && pendingCheckpoint.type === 'automatic') {
+        addToast(
+          'You have pending changes. Accept or Rollback them before starting another Edit run.',
+          'warning'
+        );
+        setActiveTab('diff');
+        return;
+      }
+
       setIsEditing(true);
       setActiveTab('chat');
 
@@ -932,15 +946,20 @@ export const AppStoreProvider: React.FC<{ children: ReactNode }> = ({ children }
     const targetCheckpointId = pendingCheckpoint.id;
     try {
       const result = await window.modelForge.rollbackCheckpoint(targetCheckpointId, activeProjectId);
-      if (result.success) {
+      if (result.success && result.verified !== false) {
         addToast(`Rollback complete. Restored ${result.restoredFiles.length} file(s).`, 'success');
         await finalizeCheckpointUiState(targetCheckpointId);
         return result;
       } else {
-        if (result.conflicts && result.conflicts.length > 0) {
+        if (result.verificationFailures && result.verificationFailures.length > 0) {
+          addToast(
+            `Rollback verification failed: ${result.verificationFailures[0].reason}`,
+            'error'
+          );
+        } else if (result.conflicts && result.conflicts.length > 0) {
           addToast(`Rollback conflict: ${result.conflicts[0].reason}`, 'error');
         } else {
-          addToast(`Rollback failed: ${result.error || 'Unknown error'}`, 'error');
+          addToast(`Rollback failed: ${result.error || 'Workspace was not fully restored.'}`, 'error');
         }
         await refreshPendingCheckpointAndDiff();
         return result;

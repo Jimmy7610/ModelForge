@@ -138,6 +138,7 @@ export class PlanAgent {
       const item: AgentActivityItem = {
         id: crypto.randomUUID(),
         runId: currentRunId,
+        runKind: 'plan',
         label,
         time: timeStr,
         status: 'running',

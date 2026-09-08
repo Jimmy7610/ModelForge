@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Activity, Trash2, CheckCircle2, Eye, ShieldCheck, AlertCircle, Loader2, ShieldAlert } from 'lucide-react';
 
 import { useAppStore } from '@/store/AppStoreContext';
@@ -24,8 +24,76 @@ const PREVIEW_STEPS: ActivityStep[] = [
 ];
 
 export const AgentActivity: React.FC = () => {
-  const { agentActivities, clearAgentActivities, isPlanning, addToast } = useAppStore();
+  const {
+    agentActivities,
+    clearAgentActivities,
+    isPlanning,
+    isEditing,
+    editAgentState,
+    addToast,
+  } = useAppStore();
   const [showPreview, setShowPreview] = useState(false);
+
+  // Determine run kind: check explicit active flags or activities
+  const isEditRun = useMemo(() => {
+    if (isEditing) return true;
+    if (isPlanning) return false;
+    if (agentActivities.length > 0) {
+      const last = agentActivities[agentActivities.length - 1];
+      if (last.runKind === 'edit') return true;
+      if (last.runKind === 'plan') return false;
+      return agentActivities.some(
+        (a) =>
+          a.toolName === 'replace_in_file' ||
+          a.toolName === 'create_file' ||
+          a.toolName === 'write_file' ||
+          a.toolName === 'delete_file' ||
+          a.label.includes('Modifying') ||
+          a.label.includes('Creating') ||
+          a.label.includes('Writing') ||
+          a.label.includes('Deleted') ||
+          a.label.includes('Edit')
+      );
+    }
+    return false;
+  }, [isEditing, isPlanning, agentActivities]);
+
+  const { successfulMutations, blockedMutations, readsCount } = useMemo(() => {
+    let successfulMutations = 0;
+    let blockedMutations = 0;
+    let readsCount = 0;
+
+    for (const a of agentActivities) {
+      const isMutationTool =
+        a.toolName === 'replace_in_file' ||
+        a.toolName === 'create_file' ||
+        a.toolName === 'write_file' ||
+        a.toolName === 'delete_file';
+
+      if (isMutationTool) {
+        if (a.status === 'done') successfulMutations++;
+        else if (a.status === 'blocked') blockedMutations++;
+      } else if (
+        a.toolName === 'read_file' ||
+        a.toolName === 'list_dir' ||
+        a.toolName === 'file_search' ||
+        a.toolName === 'find_in_files' ||
+        a.toolName === 'get_project_overview'
+      ) {
+        if (a.status === 'done') readsCount++;
+      }
+    }
+
+    if (editAgentState?.summary) {
+      successfulMutations =
+        editAgentState.summary.filesModified.length +
+        editAgentState.summary.filesCreated.length +
+        editAgentState.summary.filesDeleted.length;
+      blockedMutations = editAgentState.summary.blockedToolCalls;
+    }
+
+    return { successfulMutations, blockedMutations, readsCount };
+  }, [agentActivities, editAgentState]);
 
   const displaySteps: ActivityStep[] = showPreview
     ? PREVIEW_STEPS
@@ -68,7 +136,11 @@ export const AgentActivity: React.FC = () => {
         <div className="panel-title">
           <Activity size={14} className="text-secondary" />
           <span>Agent Activity</span>
-          {isPlanning && <span className="badge badge-accent">Running</span>}
+          {isPlanning && <span className="badge badge-accent">Plan Running</span>}
+          {isEditing && <span className="badge badge-accent">Edit Running</span>}
+          {!isPlanning && !isEditing && hasContent && (
+            <span className="badge badge-secondary">{isEditRun ? 'Edit Run' : 'Plan Run'}</span>
+          )}
           {showPreview && <span className="badge badge-local">Preview</span>}
         </div>
         <div className="activity-header-actions">
@@ -158,34 +230,73 @@ export const AgentActivity: React.FC = () => {
           </div>
 
           {/* Safe Mode Status Card */}
-          <div className="test-metric-card">
-            <div className="test-metric-left">
-              <div className="test-pass-badge" style={{ background: 'rgba(59, 130, 246, 0.15)', borderColor: 'rgba(59, 130, 246, 0.4)' }}>
-                <ShieldCheck size={22} style={{ color: '#60a5fa' }} />
+          {isEditRun ? (
+            <div className="test-metric-card">
+              <div className="test-metric-left">
+                <div className="test-pass-badge" style={{ background: 'rgba(16, 185, 129, 0.15)', borderColor: 'rgba(16, 185, 129, 0.4)' }}>
+                  <ShieldCheck size={22} style={{ color: '#34d399' }} />
+                </div>
+                <div className="test-pass-info">
+                  <div className="test-pass-score font-mono" style={{ color: '#34d399' }}>EDIT SAFE JAIL</div>
+                  <div className="test-pass-sub">
+                    {displaySteps.length} action{displaySteps.length === 1 ? '' : 's'} recorded · {successfulMutations} mutation{successfulMutations === 1 ? '' : 's'} applied
+                  </div>
+                </div>
               </div>
-              <div className="test-pass-info">
-                <div className="test-pass-score font-mono">READ-ONLY SAFE JAIL</div>
-                <div className="test-pass-sub">
-                  {displaySteps.length} action{displaySteps.length === 1 ? '' : 's'} recorded · 0 mutations allowed
+
+              <div className="test-metric-stats font-mono">
+                <div className="metric-stat-row">
+                  <span className="stat-label">Mode</span>
+                  <span className="stat-value text-success">Edit</span>
+                </div>
+                <div className="metric-stat-row">
+                  <span className="stat-label">Jail Root</span>
+                  <span className="stat-value text-success">Contained</span>
+                </div>
+                <div className="metric-stat-row">
+                  <span className="stat-label">Mutations</span>
+                  <span className="stat-value text-success">
+                    {successfulMutations} applied{blockedMutations > 0 ? ` (${blockedMutations} blocked)` : ''}
+                  </span>
+                </div>
+                {readsCount > 0 && (
+                  <div className="metric-stat-row">
+                    <span className="stat-label">Reads</span>
+                    <span className="stat-value text-muted">{readsCount} inspected</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="test-metric-card">
+              <div className="test-metric-left">
+                <div className="test-pass-badge" style={{ background: 'rgba(59, 130, 246, 0.15)', borderColor: 'rgba(59, 130, 246, 0.4)' }}>
+                  <ShieldCheck size={22} style={{ color: '#60a5fa' }} />
+                </div>
+                <div className="test-pass-info">
+                  <div className="test-pass-score font-mono">READ-ONLY SAFE JAIL</div>
+                  <div className="test-pass-sub">
+                    {displaySteps.length} action{displaySteps.length === 1 ? '' : 's'} recorded · 0 mutations allowed
+                  </div>
+                </div>
+              </div>
+
+              <div className="test-metric-stats font-mono">
+                <div className="metric-stat-row">
+                  <span className="stat-label">Mode</span>
+                  <span className="stat-value text-primary">Plan / Read</span>
+                </div>
+                <div className="metric-stat-row">
+                  <span className="stat-label">Jail Root</span>
+                  <span className="stat-value text-success">Contained</span>
+                </div>
+                <div className="metric-stat-row">
+                  <span className="stat-label">Mutations</span>
+                  <span className="stat-value">0 allowed</span>
                 </div>
               </div>
             </div>
-
-            <div className="test-metric-stats font-mono">
-              <div className="metric-stat-row">
-                <span className="stat-label">Mode</span>
-                <span className="stat-value text-primary">Plan / Read</span>
-              </div>
-              <div className="metric-stat-row">
-                <span className="stat-label">Jail Root</span>
-                <span className="stat-value text-success">Contained</span>
-              </div>
-              <div className="metric-stat-row">
-                <span className="stat-label">Mutations</span>
-                <span className="stat-value">0 blocked</span>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       )}
     </div>

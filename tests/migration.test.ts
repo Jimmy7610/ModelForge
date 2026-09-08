@@ -25,7 +25,7 @@ describe('Settings Schema v2 & Model Library Migration', () => {
     const legacyPass1 = {
       schemaVersion: 1,
       startupPage: 'home',
-      modelDirectory: 'S:\\AI\\Models',
+      modelDirectory: path.join(tempDir, 'LegacyModels'),
       confirmDestructiveActions: true,
       compactMode: false,
     };

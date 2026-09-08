@@ -102,6 +102,14 @@ export class EditAgent {
       throw new Error('Edit Agent is already running a task.');
     }
 
+    // Enforce one-pending-edit transaction rule: block starting new Edit Agent while unreviewed automatic changes exist
+    const existingPending = this.checkpointService.getPendingCheckpoint(project.id);
+    if (existingPending && existingPending.type === 'automatic') {
+      throw new Error(
+        'You have pending changes. Accept or Rollback them before starting another Edit run.'
+      );
+    }
+
     if (this.inferenceService.getModelState() !== 'loaded') {
       throw new Error('No model loaded. Please load a local GGUF model in the Models library first.');
     }
@@ -116,6 +124,7 @@ export class EditAgent {
 
     const currentRunId = runId || crypto.randomUUID();
     this.activeRunId = currentRunId;
+    this.activeCheckpointId = null;
     this.status = 'running';
     this.activeProjectId = project.id;
     this.activities = [];
@@ -156,6 +165,7 @@ export class EditAgent {
       const item: AgentActivityItem = {
         id: crypto.randomUUID(),
         runId: currentRunId,
+        runKind: 'edit',
         label,
         time: timeStr,
         status: 'running',
@@ -198,6 +208,7 @@ export class EditAgent {
       // 1. Arm automatic checkpoint
       const manifest = this.checkpointService.armAutomaticCheckpoint(project.id, projectPath);
       this.activeCheckpointId = manifest.id;
+      notifyState();
 
       // 2. Initialize Workspace Guard & Edit Session
       const guard = new WorkspaceGuard(projectPath);
@@ -463,7 +474,7 @@ export class EditAgent {
               type: 'object',
               properties: {
                 path: { type: 'string', description: 'Relative path of the existing file' },
-                oldText: { type: 'string', description: 'Exact existing text block to replace' },
+                oldText: { type: 'string', minLength: 1, description: 'Exact non-empty existing text block to replace' },
                 newText: { type: 'string', description: 'Replacement text' },
                 replaceAll: { type: 'boolean', description: 'Whether to replace all occurrences' },
               },
@@ -478,6 +489,19 @@ export class EditAgent {
               if (!checkToolBudget(act)) {
                 failedToolCalls++;
                 return budgetReachedResponse;
+              }
+
+              // Validate oldText argument: must be a non-empty string
+              if (typeof args?.oldText !== 'string' || args.oldText.length === 0) {
+                blockedToolCalls++;
+                act.blocked(
+                  'oldText must contain the exact non-empty existing text to replace. Read the file with read_file and retry.',
+                  `Invalid edit request — model corrected automatically`
+                );
+                return JSON.stringify({
+                  error: 'Invalid edit request: oldText must be a non-empty string matching existing code. Use read_file to inspect the exact file content first, then retry replace_in_file with the exact text.',
+                  blocked: true,
+                });
               }
 
               try {

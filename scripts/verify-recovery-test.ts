@@ -11,11 +11,16 @@ import { WorkspaceGuard } from '../src/main/workspace/guard';
 import { Project, ModelRecord } from '../src/shared/types';
 
 async function main() {
-  const modelPath = process.env.MODEL_FORGE_TEST_GGUF || 'S:\\AI\\Models\\GGUF\\qwen2.5-coder-7b-instruct-q4_k_m.gguf';
+  const modelPath = process.env.MODEL_FORGE_TEST_GGUF;
   const testDir = 'C:\\Temp\\ModelForge-Recovery-Test';
   const storageDir = 'C:\\Temp\\ModelForge-Recovery-Storage';
 
   console.log('=== REAL REGRESSION TEST: C:\\Temp\\ModelForge-Recovery-Test ===');
+
+  if (!modelPath) {
+    console.log('[INFO] MODEL_FORGE_TEST_GGUF is required for real hardware QA.');
+    process.exit(0);
+  }
 
   if (!fs.existsSync(modelPath)) {
     console.error(`Model file not found at: ${modelPath}`);
@@ -71,11 +76,12 @@ async function main() {
     name: 'ModelForge-Recovery-Test',
     path: testDir,
     rootPath: testDir,
-    createdAt: Date.now(),
-    lastAccessedAt: Date.now(),
+    canonicalRootPath: testDir,
+    createdAt: new Date().toISOString(),
+    lastOpenedAt: new Date().toISOString(),
   };
 
-  const activitiesLogged: { type: string; status: string; title: string; message?: string }[] = [];
+  const activitiesLogged: { toolName?: string; status: string; label: string; detail?: string }[] = [];
 
   const prompt = 'Open src/test.ts and add a new exported function called recoveryTest that returns true.\nKeep the existing hello function unchanged.\nDo not run tests.';
 
@@ -84,12 +90,12 @@ async function main() {
   await editAgent.startEditing(project, prompt, {
     onActivity: (act) => {
       activitiesLogged.push({
-        type: act.type,
+        toolName: act.toolName,
         status: act.status,
-        title: act.title,
-        message: act.message,
+        label: act.label,
+        detail: act.detail,
       });
-      console.log(`  [Activity] [${act.status.toUpperCase()}] ${act.type}: ${act.title}`);
+      console.log(`  [Activity] [${act.status.toUpperCase()}] ${act.toolName || 'agent'}: ${act.label}`);
     },
   });
 
@@ -112,7 +118,7 @@ async function main() {
 
   // Check for repeated red failures
   const failedEdits = activitiesLogged.filter(
-    (a) => a.status === 'failed' && a.type === 'replace_in_file'
+    (a) => a.status === 'error' && a.toolName === 'replace_in_file'
   );
   console.log(`Failed replace_in_file count: ${failedEdits.length} (expected: 0 or handled cleanly)`);
 
@@ -127,7 +133,10 @@ async function main() {
   // Rollback Test
   console.log('\n[Testing Rollback]...');
   const rollbackResult = checkpointService.rollback(cpId, project.id, guard);
-  console.log(`Rollback success=${rollbackResult.success}`);
+  console.log(`Rollback success=${rollbackResult.success}, verified=${rollbackResult.verified}`);
+  if (!rollbackResult.success || !rollbackResult.verified) {
+    throw new Error(`Rollback failed or was not verified: ${JSON.stringify(rollbackResult)}`);
+  }
   const restoredContent = fs.readFileSync(testFile, 'utf8');
   const rollbackMatchesInitial = (restoredContent === initialContent);
   console.log(`Restored content matches initial bit-for-bit: ${rollbackMatchesInitial}`);

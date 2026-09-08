@@ -7,6 +7,7 @@ export type {
   FileDiffStatus,
   CheckpointDiffResult,
   RollbackResult,
+  RollbackVerificationFailure,
 } from '../../shared/types';
 
 
